@@ -1,0 +1,1580 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffe9d6">
+<title>Il cucciolo di Lolo</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #ffe9d6;
+    touch-action: none; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+    font-family: "Comic Sans MS", "Chalkboard SE", "Baloo 2", system-ui, sans-serif;
+  }
+  canvas#game { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  .hud { position: fixed; z-index: 5; top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); display: flex; gap: 10px; }
+  .hud button { width: 52px; height: 52px; border-radius: 50%; border: none; background: rgba(255,255,255,.8); font-size: 26px; cursor: pointer; box-shadow: 0 3px 0 rgba(0,0,0,.08); }
+  .hud button:focus-visible, #play:focus-visible { outline: 4px solid #6a7bd1; outline-offset: 3px; }
+  #start { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3vh; background: rgba(255,248,240,.7); transition: opacity .4s; }
+  #start.hide { opacity: 0; pointer-events: none; }
+  #start h1 { margin: 0; text-align: center; font-size: min(10vw, 11vh); color: #ff8fb1; text-shadow: 0 .05em 0 #fff, 0 .1em 0 rgba(0,0,0,.08); }
+  #start p { margin: 0; font-size: min(5vw, 5vh); color: #6a7bd1; text-align: center; }
+  #play { width: min(28vw, 28vh); height: min(28vw, 28vh); border-radius: 50%; border: none; background: #8fe3b0; color: #fff; font-size: min(12vw, 12vh); cursor: pointer; box-shadow: 0 1.2vh 0 #5fc48a; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.08); } }
+  @media (prefers-reduced-motion: reduce) { #play { animation: none; } }
+</style>
+</head>
+<body>
+<canvas id="game" role="img" aria-label="Gioco: scegli un cucciolo (scimmietta, scoiattolo o foca), guarda come si sente e prenditene cura durante la giornata"></canvas>
+
+<div class="hud">
+  <button id="btnPet" aria-label="Cambia cucciolo">🐾</button>
+  <button id="btnSpeed" aria-label="Facile">🐢</button>
+  <button id="btnMute" aria-label="Spegni l'audio">🔊</button>
+  <button id="btnFull" aria-label="Schermo intero">⛶</button>
+</div>
+
+<div id="start">
+  <h1>Il cucciolo di Lolo</h1>
+  <p>Guarda come si sente… e prenditi cura di lui! 🐾</p>
+  <p class="age" style="font-size:clamp(16px,2.3vw,24px);opacity:.75;margin:.3em 0 .7em">👶 3–5 anni · da 2,5 anni giocato insieme a un adulto</p>
+  <button id="play" aria-label="Gioca">▶</button>
+</div>
+
+<script>
+'use strict';
+/* =========================================================
+   Il cucciolo di Lolo — un piccolo Tamagotchi per imparare l'empatia:
+   guardare il cucciolo (faccia + corpo), capire cosa gli serve, aiutarlo.
+   3 cuccioli: scimmietta, scoiattolo, foca. La giornata avanza facendo i passi
+   della routine (mattina → scuola → pomeriggio → siesta → sera → nanna).
+   Niente "hai perso": il cucciolo non si ammala mai, al massimo fa il broncio.
+   Cuccioli, pose ed espressioni: copiati da proposta-espressioni.html (stessa fonte).
+   ========================================================= */
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+
+// ---------- helpers ----------
+const TAU = Math.PI * 2, INK = '#5a4a6a', RAINBOW = ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf', '#9bf6ff', '#a0c4ff', '#bdb2ff'];
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, u) => a + (b - a) * u;
+const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+function rr(c, x, y, w, h, r) { r = Math.max(0, Math.min(r, w / 2, h / 2)); c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+function ell(c, x, y, rx, ry, rot) { c.beginPath(); c.ellipse(x, y, Math.max(.1, rx), Math.max(.1, ry), rot || 0, 0, TAU); }
+function circ(c, x, y, r) { c.beginPath(); c.arc(x, y, Math.max(.1, r), 0, TAU); }
+function starPath(c, x, y, r, rot) { c.beginPath(); for (let i = 0; i < 10; i++) { const a = rot + i * Math.PI / 5 - Math.PI / 2, rad = i % 2 ? r * .48 : r; i ? c.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad) : c.moveTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); } c.closePath(); }
+function heartPath(c, x, y, r) { c.beginPath(); c.moveTo(x, y + r * .9); c.bezierCurveTo(x - r * 1.4, y - r * .1, x - r * .7, y - r * 1.2, x, y - r * .4); c.bezierCurveTo(x + r * .7, y - r * 1.2, x + r * 1.4, y - r * .1, x, y + r * .9); c.closePath(); }
+function dropPath(c, x, y, r) { c.beginPath(); c.moveTo(x, y - r * 1.6); c.quadraticCurveTo(x + r * 1.1, y - r * .1, x, y + r); c.quadraticCurveTo(x - r * 1.1, y - r * .1, x, y - r * 1.6); c.closePath(); }
+
+// ---------- 🐢 facile / 🐇 normale (condivisa tra i giochi) ----------
+const SPEEDS = {
+  lento:   { icon: '🐢', label: 'Facile: un passo alla volta, l\'oggetto giusto è già pronto', k: .8 },
+  normale: { icon: '🐇', label: 'Normale: scegli tu l\'oggetto giusto, e a volte chiede qualcosa in più', k: 1 },
+};
+const SPEED_ORDER = ['lento', 'normale'];
+let speedKey = 'lento';
+try { const s = localStorage.getItem('lolo-speed'); if (SPEEDS[s]) speedKey = s; } catch (e) {}
+const SPD = () => SPEEDS[speedKey];
+
+// =========================================================
+//  AUDIO (tutto generato in codice)
+// =========================================================
+let ac = null, master = null, noiseBuf = null, muted = false;
+function initAudio() {
+  if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+  ac = new AC();
+  const comp = ac.createDynamicsCompressor(); master = ac.createGain(); master.gain.value = .7;
+  master.connect(comp); comp.connect(ac.destination);
+  noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+  const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+}
+const canPlay = () => ac && !muted;
+function env(g, t0, a, d, vol) { g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + a); g.gain.exponentialRampToValueAtTime(.0001, t0 + a + d); }
+function tone(f0, f1, dur, type, vol, delay) {
+  if (!canPlay()) return;
+  const t0 = ac.currentTime + (delay || 0), o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'sine'; o.frequency.setValueAtTime(f0, t0); if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+  env(g, t0, .01, dur, vol || .2); o.connect(g); g.connect(master); o.start(t0); o.stop(t0 + dur + .05);
+}
+function noise(dur, f0, f1, vol, type, delay) {
+  if (!canPlay()) return;
+  const t0 = ac.currentTime + (delay || 0), s = ac.createBufferSource(); s.buffer = noiseBuf;
+  const f = ac.createBiquadFilter(); f.type = type || 'bandpass'; f.Q.value = 1.2; f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+  const g = ac.createGain(); env(g, t0, .02, dur, vol); s.connect(f); f.connect(g); g.connect(master); s.start(t0); s.stop(t0 + dur + .05);
+}
+const sfx = {
+  pop() { tone(400, 1000, .1, 'triangle', .14); },
+  fanfare() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, f, i === 4 ? .5 : .13, 'triangle', .17, i * .11)); },
+  giggle() { for (let i = 0; i < 5; i++) tone(700 + i * 60 + Math.random() * 40, 900 + i * 60, .07, 'triangle', .1, i * .08); },
+  purr() { for (let i = 0; i < 6; i++) tone(90, 110, .12, 'sawtooth', .04, i * .13); },
+  yawn() { tone(500, 260, .9, 'sine', .12); tone(520, 270, .9, 'triangle', .04); },
+  rumble() { tone(70, 55, .5, 'sawtooth', .06); tone(80, 60, .4, 'sawtooth', .05, .45); },
+  shiver() { for (let i = 0; i < 8; i++) tone(300 + (i % 2) * 40, 300, .04, 'square', .03, i * .06); },
+  sniff() { for (let i = 0; i < 3; i++) noise(.08, 2500, 1500, .06, 'bandpass', i * .14); },
+  sparkle() { [1319, 1568, 2093].forEach((f, i) => tone(f, f, .2, 'sine', .07, i * .07)); },
+  whoosh() { noise(.4, 300, 1800, .1); },
+  lullaby() { [[659, .5], [587, .5], [523, 1], [587, .5], [659, .5], [659, 1], [587, .5], [523, .5], [494, 1.4]].reduce((d, [f, l]) => { tone(f, f, l * .9, 'sine', .08, d); return d + l * .55; }, 0); }, // ninna nanna dolce
+};
+// versi dei cuccioli (gli animali fanno solo i versi)
+const VOICES = {
+  scimmietta() { [0, .13, .26].forEach(d => tone(650, 980, .1, 'triangle', .12, d)); tone(900, 600, .26, 'triangle', .11, .42); },
+  scoiattolo() { for (let i = 0; i < 6; i++) tone(1500 + Math.random() * 400, 1900, .04, 'square', .05, i * .055); },
+  foca() { tone(420, 300, .16, 'sawtooth', .1); tone(430, 300, .18, 'sawtooth', .1, .24); },
+  ippopotamo() { tone(140, 110, .28, 'sawtooth', .1); tone(160, 120, .22, 'triangle', .1, .32); for (let i = 0; i < 3; i++) tone(500 + i * 120, 700 + i * 120, .06, 'sine', .06, .6 + i * .07); }, // brontolio buffo + bollicine
+  elefante() { tone(380, 760, .35, 'sawtooth', .09); tone(760, 640, .25, 'sawtooth', .07, .33); }, // barrito piccolino
+};
+
+// ---------- voce: solo 'Bravo Lolo!' / 'Bravissimo Lolo!' / 'Wow!' ----------
+const VOICE_CLIPS = {}; // es. { 'Bravo Lolo!': 'bravo-lolo.mp3' } → registrazione di papà/mamma
+const clipCache = {};
+let voiceIt = null, voiceEs = null, voiceEn = null;
+function pickVoices() {
+  if (!('speechSynthesis' in window)) return;
+  const all = speechSynthesis.getVoices();
+  const best = re => { const vs = all.filter(v => re.test(v.lang)); const sc = v => (/natural|neural|enhanced|premium/i.test(v.name) ? 8 : 0) + (/google/i.test(v.name) ? 4 : 0) + (v.localService ? 1 : 0); return vs.sort((a, b) => sc(b) - sc(a))[0] || null; };
+  voiceIt = best(/^it([-_]|$)/i); voiceEs = best(/^es([-_]|$)/i); voiceEn = best(/^en([-_]|$)/i);
+}
+if ('speechSynthesis' in window) { pickVoices(); if (speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', pickVoices); }
+function speak(text) {
+  if (muted) return;
+  const src = VOICE_CLIPS[text];
+  if (src) { try { const a = clipCache[text] || (clipCache[text] = new Audio(src)); a.currentTime = 0; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {} return; }
+  if (!('speechSynthesis' in window)) return;
+  if (!voiceIt && !voiceEs && !voiceEn) pickVoices();
+  const isWow = text === 'Wow!', v = voiceIt || voiceEs || (isWow ? voiceEn : null);
+  if (!v) return;
+  const say = isWow ? (v === voiceEn ? 'Wooow!' : 'Uaau!') : text;
+  try { const u = new SpeechSynthesisUtterance(say); u.voice = v; u.lang = v.lang; u.rate = isWow ? .7 : .9; u.pitch = 1; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) {}
+}
+
+// ----- da proposta-espressioni.html (cuccioli, pose, facce) -----
+// =========================================================
+//  POSE: il linguaggio del corpo di ogni emozione (unità = s; origine = centro pancia, piedi a y ≈ 1)
+//  hands: dove vanno le mani [sinistra, destra]; ears 0 su → 1 giù; tail -1 giù → 1 su; tilt testa; squash postura
+// =========================================================
+const MOODS = {
+  felice:  { name: 'Felice', icon: '😊', eyes: 'open', mouth: 'smile', brows: 'up', hands: [[-.62, .72], [.62, .72]], swing: .06, ears: 0, tail: .6, wag: 3, tilt: 0, squash: 1,
+             see: 'orecchie su, coda che scodinzola, sorriso', act: 'Sta bene! Si può giocare insieme' },
+  fame:    { name: 'Ha fame', icon: '🍎', eyes: 'open', look: [0, .6], mouth: 'hungry', brows: 'worried', hands: [[-.17, .42], [.17, .46]], ears: .25, tail: 0, wag: 1, tilt: 0, squash: 1, fx: ['rumble'],
+             see: 'mani sulla pancia che brontola, bocca aperta, guarda in giù', act: 'Diamogli da mangiare' },
+  sonno:   { name: 'Ha sonno', icon: '💤', eyes: 'sleepy', mouth: 'yawn', brows: 'heavy', hands: [[-.55, .76], [.27, -.6]], rub: true, ears: .55, tail: -.4, wag: .5, tilt: .16, sway: .05, squash: .97, fx: ['zzz'],
+             see: 'occhi pesanti, sbadiglia, si stropiccia l\'occhio, testa che ciondola', act: 'Andiamo a nanna' },
+  gioco:   { name: 'Vuole giocare', icon: '⚽', eyes: 'sparkle', mouth: 'big', brows: 'up', hands: [[-.78, -.78], [.78, -.78]], wave: .12, ears: 0, tail: 1, wag: 9, tilt: 0, bounce: .12, squash: 1, fx: ['stars'],
+             see: 'saltella, braccia in alto, occhi che brillano, coda veloce', act: 'Giochiamo!' },
+  sporco:  { name: 'È sporco', icon: '🫧', eyes: 'squint', mouth: 'wavy', brows: 'worried', wrinkle: true, hands: [[-.6, .75], [.5, -1.12]], scratch: true, ears: .3, tail: -.2, wag: 1, tilt: -.08, squash: 1, fx: ['dirt', 'stink'],
+             see: 'macchie, puzzetta e moschino, si gratta la testa, naso arricciato', act: 'Una bella doccia' },
+  maniSporche: { name: 'Ha le mani sporche', icon: '🧼', eyes: 'open', look: [0, .7], mouth: 'small', brows: 'worried', hands: [[-.34, .02], [.34, .02]], ears: .1, tail: .2, wag: 1, tilt: 0, squash: 1, fx: ['dirtyHands'], isNew: true,
+             see: 'si guarda le manine macchiate e le tiene in avanti', act: 'Lavarsi le mani con il sapone' },
+  coccole: { name: 'Vuole le coccole', icon: '🤗', eyes: 'puppy', mouth: 'small', brows: 'sad', hands: [[-1.05, .02], [1.05, .02]], reach: true, ears: .6, tail: .2, wag: 1.5, tilt: -.18, squash: 1, blush: true,
+             see: 'occhioni lucidi, braccia aperte verso di te, testa inclinata', act: 'Un abbraccio (accarezzalo)' },
+  sete:    { name: 'Ha sete', icon: '💧', eyes: 'open', mouth: 'pant', brows: 'worried', hands: [[-.6, .75], [.72, -.42]], fan: true, ears: .4, tail: -.2, wag: 1, tilt: 0, squash: 1, fx: ['sweat'],
+             see: 'lingua fuori, goccia di sudore, si fa aria con la mano', act: 'Un bicchiere d\'acqua' },
+  pipi:    { name: 'Deve fare la pipì', icon: '🚽', eyes: 'wide', mouth: 'wavy', brows: 'worried', hands: [[-.07, .74], [.07, .74]], ears: .1, tail: 0, wag: 2, tilt: 0, legs: 'crossed', wiggle: .05, squash: 1,
+             see: 'gambe incrociate, mani in mezzo, balletto, occhi preoccupati', act: 'Di corsa al vasino!' },
+  cacca:   { name: 'Deve fare la cacca', icon: '💩', eyes: 'wide', mouth: 'wavy', brows: 'worried', hands: [[-.22, .6], [.22, .62]], ears: .15, tail: -.2, wag: 2, tilt: 0, legs: 'crossed', wiggle: .035, squash: .98, isNew: true,
+             see: 'si tiene il pancino, gambe strette, saltella sul posto, occhi preoccupati', act: 'Di corsa al vasino!' },
+  freddo:  { name: 'Ha freddo', icon: '🧣', eyes: 'worried', mouth: 'chatter', brows: 'worried', hands: [[.34, .26], [-.34, .26]], ears: .5, tail: -.8, wag: 0, tilt: 0, shiver: .02, squash: .95, fx: ['blue', 'snow'],
+             see: 'si abbraccia da solo, trema, batte i denti, guance blu', act: 'La copertina o il pigiama' },
+  triste:  { name: 'È triste', icon: '💗', eyes: 'sad', look: [0, .5], mouth: 'frown', brows: 'sad', hands: [[-.42, .86], [.42, .86]], ears: 1, tail: -1, wag: 0, tilt: .08, squash: .94, tear: true, isNew: true,
+             see: 'lacrimuccia, orecchie e coda giù, braccia molli, guarda in basso', act: 'Cosa c\'è? Una carezza e un abbraccio' },
+  vergogna: { name: 'Si vergogna', icon: '🫣', eyes: 'open', look: [.8, .6], mouth: 'small', brows: 'sad', hands: [[-.2, -.6], [.24, -.55]], peek: true, ears: .75, tail: -.8, wag: 0, tilt: .14, squash: .95, fx: ['blushBig'], isNew: true,
+             see: 'si copre la faccia con le mani, guance rosse, guarda di lato, si fa piccolo', act: 'Non fa niente, succede! Una carezza' },
+  arrabbiato: { name: 'È arrabbiato', icon: '💢', eyes: 'angry', mouth: 'pout', brows: 'angry', hands: [[.3, .2], [-.3, .2]], ears: .15, tail: .3, wag: 7, tilt: 0, legs: 'stomp', squash: 1, fx: ['steam', 'puff'], isNew: true,
+             see: 'braccia incrociate, guance gonfie e rosse, batte il piede, sbuffa', act: 'Calmiamoci: coccole, un gioco o un bel respiro' },
+  capriccio: { name: 'Arrabbiato senza motivo', icon: '⛈️', eyes: 'angry', mouth: 'pout', brows: 'angry', hands: [[.3, .2], [-.3, .2]], ears: .15, tail: .3, wag: 7, tilt: 0, legs: 'stomp', squash: 1, fx: ['steam', 'puff'], isNew: true,
+             see: 'come la rabbia, ma senza un motivo: ha pensato o visto qualcosa che non gli piace (nuvola col temporale)', act: 'Calmiamoci insieme e diciamogli che va tutto bene' },
+  bagnato: { name: 'Si è fatto la pipì addosso', icon: '🫣', eyes: 'open', look: [.8, .6], mouth: 'small', brows: 'sad', hands: [[-.2, -.6], [.24, -.55]], peek: true, ears: .75, tail: -.8, wag: 0, tilt: .14, squash: .95, fx: ['blushBig', 'puddle'], isNew: true,
+             see: 'pozzetta per terra, si copre la faccia, ha vergogna', act: 'Prima lo laviamo e cambiamo, poi una coccola' },
+  sporcato: { name: 'Si è fatto la cacca addosso', icon: '🫣', eyes: 'open', look: [.8, .6], mouth: 'small', brows: 'sad', hands: [[-.2, -.6], [.24, -.55]], peek: true, ears: .75, tail: -.8, wag: 0, tilt: .14, squash: .95, fx: ['blushBig', 'mess'], isNew: true,
+             see: 'macchia sul sederino e puzzetta, si copre la faccia, ha vergogna', act: 'Prima lo laviamo e cambiamo, poi una coccola' },
+  pancia:  { name: 'Ha mal di pancia', icon: '💊', eyes: 'sad', mouth: 'wavy', brows: 'sad', hands: [[-.16, .42], [.16, .46]], rubBelly: true, ears: .6, tail: -.6, wag: 0, tilt: .1, squash: .95, fx: ['sweat', 'green'], isNew: true,
+             see: 'si tiene la pancia, faccina verdina, sudore, orecchie giù', act: 'Un cucchiaino di medicina' },
+  malato:  { name: 'È malato', icon: '💊', eyes: 'sleepy', mouth: 'thermo', brows: 'sad', hands: [[-.5, .82], [.5, .82]], ears: .85, tail: -.9, wag: 0, tilt: .18, sway: .03, squash: .93, fx: ['fever', 'icepack'], isNew: true,
+             see: 'termometro in bocca, borsa del ghiaccio, guance rosse di febbre, stanchissimo', act: 'Medicina e poi a letto, a riposare' },
+  dorme:   { name: 'Dorme', icon: '🌙', eyes: 'closed', mouth: 'o', brows: 'none', hands: [[-.2, .5], [.2, .52]], ears: .6, tail: -.5, wag: 0, tilt: .22, squash: .97, breath: true, fx: ['zzz'],
+             see: 'occhi chiusi, respira piano, testa appoggiata', act: 'Shh… lasciamolo dormire' },
+};
+const MOOD_KEYS = Object.keys(MOODS);
+
+// =========================================================
+//  CUCCIOLI (di fronte, articolati: testa che si inclina, orecchie, coda, braccia, gambe)
+// =========================================================
+function limb(c, s, x0, y0, x1, y1, bend, w, col) { // braccio morbido con il gomito
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2, dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1;
+  c.strokeStyle = col; c.lineWidth = s * w; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(s * x0, s * y0); c.quadraticCurveTo(s * (mx - dy / L * bend), s * (my + dx / L * bend), s * x1, s * y1); c.stroke();
+}
+const PETS = {
+  scimmietta: { name: 'Scimmietta', emoji: '🐒', fur: '#c49a7a', dark: '#a87e60', light: '#f1d6bf', hand: '#f1d6bf', arm: '#b58a6a',
+    face: { eyeY: -.66, eyeDX: .26, eyeR: .1, mouthY: -.3, cheekY: -.42, cheekDX: .44, noseY: -.45, top: -1.3 }, shoulder: [.42, .12], armW: .16, handR: .12, bodyE: [0, .45, .56, .56], neck: .08,
+    tail(c, s, u, w) { // u: 0 giù → 1 su
+      c.strokeStyle = this.fur; c.lineWidth = s * .12; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(s * .3, s * .78);
+      c.bezierCurveTo(s * lerp(.9, 1.0, u), s * lerp(.98, .7, u), s * lerp(1.25, 1.1 + w, u), s * lerp(1.05, -.3, u), s * lerp(1.38 + w, .75 + w, u), s * lerp(.92, -.25, u));
+      c.stroke();
+      if (u > .5) { c.beginPath(); c.arc(s * (.68 + w), s * -.12, s * .1, -Math.PI * .3, Math.PI * .9); c.stroke(); } // ricciolo
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .45, s * .56, s * .56); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .52, s * .36, s * .38); c.fill();
+    },
+    head(c, s, droop) {
+      for (const sx of [-1, 1]) {
+        const ex = sx * s * (.82 + droop * .04), ey = s * (-.58 + droop * .24);
+        c.fillStyle = this.fur; ell(c, ex, ey, s * .28, s * .28 * (1 - droop * .25)); c.fill();
+        c.fillStyle = this.light; ell(c, ex, ey, s * .16, s * .16 * (1 - droop * .25)); c.fill();
+      }
+      c.fillStyle = this.fur; circ(c, 0, s * -.55, s * .74); c.fill();
+      c.fillStyle = this.light; circ(c, -s * .25, s * -.66, s * .3); c.fill(); circ(c, s * .25, s * -.66, s * .3); c.fill(); ell(c, 0, s * -.36, s * .48, s * .33); c.fill();
+      c.fillStyle = this.dark; circ(c, -s * .06, s * -.45, s * .025); c.fill(); circ(c, s * .06, s * -.45, s * .025); c.fill();
+    } },
+  scoiattolo: { name: 'Scoiattolo', emoji: '🐿️', fur: '#e7a06a', dark: '#c97f48', light: '#f6d2ae', hand: '#f6d2ae', arm: '#d48a55',
+    face: { eyeY: -.66, eyeDX: .28, eyeR: .1, mouthY: -.3, cheekY: -.4, cheekDX: .44, noseY: -.46, top: -1.45 }, shoulder: [.33, .16], armW: .13, handR: .09, bodyE: [0, .45, .5, .55], neck: .1,
+    tail(c, s, u, w) { // coda grande: su = dritta dietro la schiena, giù = per terra
+      const cx = lerp(.95, .72, u), cy = lerp(.78, -.15, u), rot = lerp(1.3, .35, u) + w * .5, rx = .42, ry = lerp(.75, .9, u);
+      c.fillStyle = this.fur; ell(c, s * cx, s * cy, s * rx, s * ry, rot); c.fill();
+      c.fillStyle = this.light; ell(c, s * (cx + .03), s * cy, s * .2, s * ry * .72, rot); c.fill();
+      c.fillStyle = this.fur; circ(c, s * (cx + Math.sin(rot) * ry * .9), s * (cy - Math.cos(rot) * ry * .9), s * .24); c.fill();
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .45, s * .5, s * .55); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .52, s * .32, s * .4); c.fill();
+    },
+    head(c, s, droop) {
+      for (const sx of [-1, 1]) { // orecchie a punta che si piegano di lato quando è giù
+        c.save(); c.translate(sx * s * .38, s * -.98); c.rotate(sx * droop * 1.0);
+        c.fillStyle = this.fur; c.beginPath(); c.moveTo(-s * .17, s * .05); c.lineTo(sx * s * .05, -s * .45); c.lineTo(s * .17, s * .05); c.closePath(); c.fill();
+        c.fillStyle = this.light; c.beginPath(); c.moveTo(-s * .09, 0); c.lineTo(sx * s * .04, -s * .3); c.lineTo(s * .09, 0); c.closePath(); c.fill();
+        c.fillStyle = this.dark; ell(c, sx * s * .05, -s * .47, s * .045, s * .085, sx * .3); c.fill();
+        c.restore();
+      }
+      c.fillStyle = this.fur; ell(c, 0, s * -.55, s * .68, s * .62); c.fill();
+      c.fillStyle = this.light; ell(c, -s * .38, s * -.38, s * .25, s * .2); c.fill(); ell(c, s * .38, s * -.38, s * .25, s * .2); c.fill(); ell(c, 0, s * -.36, s * .24, s * .18); c.fill();
+      c.fillStyle = this.dark; ell(c, 0, s * -.46, s * .06, s * .04); c.fill();
+    } },
+  foca: { name: 'Foca', emoji: '🦭', fur: '#a9b7c9', dark: '#8fa0b5', light: '#d9e1ec', hand: '#8fa0b5', flipper: true,
+    face: { eyeY: -.38, eyeDX: .3, eyeR: .12, mouthY: .06, cheekY: -.14, cheekDX: .48, noseY: -.19, top: -.85 }, shoulder: [.6, .28], armW: .2, handR: 0, bodyE: [0, .12, .76, .95], neck: .22,
+    tail(c, s, u, w) { // pinne della coda: su = alzate, giù = piatte
+      c.fillStyle = this.dark;
+      for (const sx of [-1, 1]) { ell(c, sx * s * .26, s * (1.02 - u * .06), s * .3, s * .1, sx * (.45 + u * .35 + w * 1.5)); c.fill(); }
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .12, s * .76, s * .95); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .42, s * .48, s * .55); c.fill();
+    },
+    head(c, s, droop) { // la foca non ha orecchie: parlano i baffi (su felici, giù tristi)
+      c.fillStyle = '#eef2f7'; ell(c, -s * .13, s * -.1, s * .18, s * .14); c.fill(); ell(c, s * .13, s * -.1, s * .18, s * .14); c.fill();
+      c.fillStyle = this.dark; for (const [x, y] of [[-.18, -.13], [-.1, -.06], [-.2, -.04], [.18, -.13], [.1, -.06], [.2, -.04]]) { circ(c, s * x, s * y, s * .018); c.fill(); }
+      c.strokeStyle = 'rgba(90,74,106,.5)'; c.lineWidth = Math.max(1, s * .016); c.lineCap = 'round';
+      for (const sx of [-1, 1]) for (const k of [0, 1]) { const y0 = -.1 + k * .07; c.beginPath(); c.moveTo(sx * s * .28, s * y0); c.lineTo(sx * s * .58, s * (y0 - .06 + droop * .2 + k * .04)); c.stroke(); }
+      c.fillStyle = INK; ell(c, 0, s * -.19, s * .09, s * .06); c.fill();
+    } },
+  ippopotamo: { name: 'Ippopotamino', emoji: '🦛', fur: '#c3a8d6', dark: '#a589c0', light: '#f1e0ef', hand: '#f1e0ef', arm: '#b499c9',
+    face: { eyeY: -.8, eyeDX: .29, eyeR: .1, mouthY: -.2, cheekY: -.34, cheekDX: .52, noseY: -.44, top: -1.3 }, shoulder: [.54, .18], armW: .18, handR: .13, bodyE: [0, .5, .68, .55], neck: .1,
+    tail(c, s, u, w) { // codina corta col ciuffetto: su = alzata, giù = a terra
+      const tx = s * (.62 + w * .3), ty = s * lerp(.92, .42, u);
+      c.strokeStyle = this.fur; c.lineWidth = s * .07; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(s * .45, s * .78); c.quadraticCurveTo(s * .6, s * lerp(.9, .62, u), tx, ty); c.stroke();
+      c.fillStyle = this.dark; circ(c, tx, ty, s * .07); c.fill();
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .5, s * .68, s * .55); c.fill(); // pancione paffuto
+      c.fillStyle = this.light; ell(c, 0, s * .57, s * .45, s * .39); c.fill();
+    },
+    head(c, s, droop) { // testone tondo, musone grande con le narici, orecchiette piccole che si abbassano
+      for (const sx of [-1, 1]) {
+        const ex = sx * s * (.5 + droop * .12), ey = s * (-1.1 + droop * .2);
+        c.fillStyle = this.fur; ell(c, ex, ey, s * .13, s * .13 * (1 - droop * .3), sx * droop * .6); c.fill();
+        c.fillStyle = '#f2b8cf'; ell(c, ex, ey + s * .01, s * .065, s * .065 * (1 - droop * .3), sx * droop * .6); c.fill();
+      }
+      c.fillStyle = this.fur; ell(c, 0, s * -.63, s * .78, s * .6); c.fill(); // testone paffuto
+      c.fillStyle = this.light; ell(c, 0, s * -.3, s * .68, s * .38); c.fill(); // musone
+      c.fillStyle = this.dark; ell(c, -s * .15, s * -.44, s * .055, s * .04, -.3); c.fill(); ell(c, s * .15, s * -.44, s * .055, s * .04, .3); c.fill(); // narici
+      c.fillStyle = 'rgba(255,255,255,.35)'; ell(c, -s * .22, s * -.95, s * .14, s * .07, -.3); c.fill(); // lucetta sulla testa
+    } },
+  elefante: { name: 'Elefantino', emoji: '🐘', fur: '#a9c6ea', dark: '#86a7d3', light: '#e3eefb', hand: '#e3eefb', arm: '#98b8e0',
+    face: { eyeY: -.8, eyeDX: .28, eyeR: .1, mouthY: -.2, cheekY: -.42, cheekDX: .46, noseY: -.5, top: -1.3 }, shoulder: [.5, .18], armW: .18, handR: .13, bodyE: [0, .5, .64, .55], neck: .1,
+    tail(c, s, u, w) { // codina sottile col ciuffetto
+      const tx = s * (.62 + w * .3), ty = s * lerp(.92, .45, u);
+      c.strokeStyle = this.dark; c.lineWidth = s * .05; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(s * .42, s * .8); c.quadraticCurveTo(s * .6, s * lerp(.92, .65, u), tx, ty); c.stroke();
+      c.fillStyle = this.dark; ell(c, tx, ty, s * .05, s * .08, .4); c.fill();
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .5, s * .64, s * .55); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .57, s * .42, s * .39); c.fill();
+    },
+    head(c, s, droop) { // orecchie grandi (sventolano su quando è felice, cadono giù quando è triste) e proboscide arricciata
+      for (const sx of [-1, 1]) {
+        const ex = sx * s * (.74 - droop * .06), ey = s * (-.68 + droop * .14), rot = sx * (-.25 + droop * .35);
+        c.fillStyle = this.fur; ell(c, ex, ey, s * .36, s * .44, rot); c.fill();
+        c.fillStyle = '#f5c9dc'; ell(c, ex + sx * s * .04, ey + s * .02, s * .22, s * .3, rot); c.fill();
+      }
+      c.fillStyle = this.fur; ell(c, 0, s * -.63, s * .7, s * .6); c.fill();
+      // proboscide: scende tra gli occhi e si arriccia di lato (giù quando è triste)
+      const tipX = .84, tipY = lerp(-.52, -.18, droop);
+      const trunk = () => { c.beginPath(); c.moveTo(-s * .02, s * -.4); c.quadraticCurveTo(-s * .02, s * -.22, s * .3, s * -.22); c.quadraticCurveTo(s * .64, s * -.22, s * tipX, s * tipY); };
+      c.lineCap = 'round'; c.strokeStyle = this.dark; c.lineWidth = s * .28; trunk(); c.stroke(); // contorno
+      c.strokeStyle = this.fur; c.lineWidth = s * .23; trunk(); c.stroke();
+      c.strokeStyle = this.dark; c.lineWidth = Math.max(1, s * .02); // pieghine della proboscide
+      for (const [x, y] of [[-.01, -.36], [.06, -.28], [.2, -.24]]) { c.beginPath(); c.moveTo(s * (x - .07), s * (y - .02)); c.lineTo(s * (x + .07), s * (y + .02)); c.stroke(); }
+      c.fillStyle = this.light; circ(c, s * tipX, s * tipY, s * .095); c.fill(); // la punta
+      c.fillStyle = 'rgba(255,255,255,.35)'; ell(c, -s * .22, s * -.97, s * .14, s * .07, -.3); c.fill(); // lucetta sulla testa
+    } },
+};
+const PET_KEYS = Object.keys(PETS);
+
+// =========================================================
+//  FACCIA: occhi, sopracciglia, bocca, lacrimuccia, naso arricciato
+// =========================================================
+function drawEyes(c, s, F, type, blink, look) {
+  const ex = F.eyeDX * s, ey = F.eyeY * s, er = F.eyeR * s, lx = look[0] * er * .35, ly = look[1] * er * .35;
+  if (blink && !['closed', 'happy', 'sleepy'].includes(type)) type = 'blinked';
+  c.lineCap = 'round'; c.strokeStyle = INK; c.lineWidth = Math.max(2, er * .32);
+  for (const sx of [-1, 1]) {
+    const x = sx * ex, y = ey;
+    if (type === 'open' || type === 'worried') {
+      c.fillStyle = INK; ell(c, x + lx, y + ly, er, er * 1.2); c.fill();
+      c.fillStyle = '#fff'; circ(c, x + lx - er * .32, y + ly - er * .42, er * .36); c.fill();
+    } else if (type === 'wide') { // spalancati (pipì!)
+      c.fillStyle = '#fff'; ell(c, x, y, er * 1.25, er * 1.4); c.fill(); c.strokeStyle = INK; c.lineWidth = Math.max(1.5, er * .18); c.stroke();
+      c.fillStyle = INK; circ(c, x + lx, y + ly, er * .6); c.fill(); c.fillStyle = '#fff'; circ(c, x + lx - er * .2, y + ly - er * .25, er * .2); c.fill();
+      c.lineWidth = Math.max(2, er * .32);
+    } else if (type === 'sparkle') {
+      c.fillStyle = INK; ell(c, x + lx, y + ly, er * 1.15, er * 1.3); c.fill();
+      c.fillStyle = '#fff'; starPath(c, x + lx - er * .25, y + ly - er * .35, er * .5, 0); c.fill(); circ(c, x + lx + er * .35, y + ly + er * .4, er * .18); c.fill();
+    } else if (type === 'puppy') { // occhioni lucidi
+      c.fillStyle = INK; ell(c, x + lx, y + ly, er * 1.35, er * 1.5); c.fill();
+      c.fillStyle = '#fff'; circ(c, x + lx - er * .4, y + ly - er * .5, er * .5); c.fill(); circ(c, x + lx + er * .45, y + ly + er * .45, er * .22); c.fill();
+      c.fillStyle = 'rgba(143,211,255,.55)'; c.beginPath(); c.ellipse(x + lx, y + ly + er * .9, er * 1.1, er * .45, 0, 0, Math.PI); c.fill(); // occhi lucidi
+    } else if (type === 'sad') { // palpebra in giù verso l'esterno
+      c.fillStyle = INK; ell(c, x + lx, y + ly + er * .1, er, er * 1.1); c.fill();
+      c.fillStyle = '#fff'; circ(c, x + lx - er * .3, y + ly - er * .2, er * .3); c.fill();
+      // palpebra triste: alta verso il naso, bassa verso l'esterno (se fosse al contrario sembrerebbe arrabbiato)
+      c.strokeStyle = INK; c.beginPath(); c.moveTo(x - sx * er * 1.1, y - er * 1.15); c.lineTo(x + sx * er * 1.15, y - er * .45); c.stroke();
+    } else if (type === 'angry') { // palpebra bassa verso il naso
+      c.fillStyle = INK; ell(c, x, y + er * .15, er * .95, er * 1.05); c.fill();
+      c.fillStyle = '#fff'; circ(c, x - er * .25, y - er * .05, er * .28); c.fill();
+      c.strokeStyle = INK; c.beginPath(); c.moveTo(x - sx * er * 1.15, y - er * .25); c.lineTo(x + sx * er * 1.15, y - er * 1.05); c.stroke();
+    } else if (type === 'squint') {
+      c.beginPath(); c.moveTo(x - sx * er, y - er * .6); c.lineTo(x + sx * er * .8, y); c.lineTo(x - sx * er, y + er * .6); c.stroke(); // > <
+    } else if (type === 'sleepy') {
+      c.fillStyle = INK; c.beginPath(); c.ellipse(x, y + er * .15, er, er * .9, 0, 0, Math.PI); c.fill();
+      c.beginPath(); c.moveTo(x - er * 1.15, y + er * .15); c.lineTo(x + er * 1.15, y + er * .15); c.stroke();
+    } else if (type === 'happy') {
+      c.beginPath(); c.arc(x, y + er * .4, er * .9, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+    } else { // closed / blinked
+      c.beginPath(); c.arc(x, y - er * .2, er * .9, Math.PI * .15, Math.PI * .85); c.stroke();
+    }
+  }
+}
+function drawBrows(c, s, F, type) {
+  if (!type || type === 'none') return;
+  const ex = F.eyeDX * s, by = (F.eyeY - F.eyeR * 2.3) * s, w = F.eyeR * s * 1.1;
+  c.strokeStyle = INK; c.lineWidth = Math.max(2, s * .028); c.lineCap = 'round';
+  for (const sx of [-1, 1]) {
+    const x = sx * ex; c.beginPath();
+    if (type === 'up') { c.arc(x, by + w * .5, w, Math.PI * 1.2, Math.PI * 1.8); }
+    else if (type === 'worried') { c.moveTo(x + sx * w, by + w * .25); c.lineTo(x - sx * w * .9, by - w * .25); }
+    else if (type === 'sad') { c.moveTo(x + sx * w, by + w * .45); c.quadraticCurveTo(x, by - w * .1, x - sx * w * .9, by - w * .45); }
+    else if (type === 'heavy') { c.moveTo(x - w, by + w * .7); c.lineTo(x + w, by + w * .7); }
+    else if (type === 'angry') { c.moveTo(x - sx * w * .9, by + w * .55); c.lineTo(x + sx * w, by - w * .25); } // giù verso il naso
+    c.stroke();
+  }
+}
+function drawMouth(c, s, F, type, t) {
+  const my = F.mouthY * s, mw = s * .17;
+  c.lineCap = 'round'; c.lineJoin = 'round'; c.strokeStyle = INK; c.lineWidth = Math.max(2, s * .035);
+  if (type === 'smile') { c.beginPath(); c.arc(0, my - mw * .55, mw, Math.PI * .2, Math.PI * .8); c.stroke(); }
+  else if (type === 'small') { const tr = Math.sin(t * 18) * mw * .03; c.beginPath(); c.arc(0, my - mw * .3 + tr, mw * .5, Math.PI * .25, Math.PI * .75); c.stroke(); } // sorrisino timido che trema
+  else if (type === 'big') { c.fillStyle = INK; c.beginPath(); c.arc(0, my - mw * .2, mw, 0, Math.PI); c.closePath(); c.fill(); c.fillStyle = '#ff9fb6'; ell(c, 0, my + mw * .5, mw * .5, mw * .28); c.fill(); }
+  else if (type === 'hungry') {
+    c.fillStyle = INK; ell(c, 0, my, mw * .65, mw * .55 + Math.sin(t * 6) * mw * .08); c.fill();
+    c.fillStyle = '#ff9fb6'; ell(c, 0, my + mw * .45, mw * .35, mw * .3); c.fill();
+    const d = (t * .6) % 1; c.fillStyle = 'rgba(143,211,255,.9)'; dropPath(c, mw * .6, my + mw * (.5 + d * .9), mw * .12); c.fill(); // acquolina
+  } else if (type === 'yawn') {
+    const cyc = (t % 4.5) / 4.5, a = cyc < .35 ? Math.sin(cyc / .35 * Math.PI) : 0;
+    c.fillStyle = INK; ell(c, 0, my + mw * .1, mw * (.25 + a * .45), mw * (.2 + a * .75)); c.fill();
+  } else if (type === 'frown') { const tr = Math.sin(t * 16) * mw * .03; c.beginPath(); c.arc(0, my + mw * .6 + tr, mw * .6, Math.PI * 1.2, Math.PI * 1.8); c.stroke(); }
+  else if (type === 'pant') { c.fillStyle = INK; c.beginPath(); c.arc(0, my - mw * .2, mw * .7, 0, Math.PI); c.closePath(); c.fill(); c.fillStyle = '#ff9fb6'; ell(c, 0, my + mw * (.6 + Math.sin(t * 9) * .1), mw * .3, mw * .42); c.fill(); }
+  else if (type === 'wavy' || type === 'chatter') {
+    const n = type === 'chatter' ? 6 : 4, j = type === 'chatter' ? Math.sin(t * 40) * mw * .08 : 0;
+    c.beginPath(); for (let i = 0; i <= n; i++) { const x = -mw * .7 + i * mw * 1.4 / n, y = my + (i % 2 ? -1 : 1) * mw * .15 + j; i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke();
+  } else if (type === 'thermo') { // termometro in bocca
+    c.save(); c.translate(mw * .1, my); c.rotate(.35);
+    c.fillStyle = '#fff'; c.strokeStyle = 'rgba(90,74,106,.4)'; c.lineWidth = 1.5; rr2(c, 0, -mw * .09, mw * 1.3, mw * .18, mw * .09); c.fill(); c.stroke();
+    c.fillStyle = '#ff6b6b'; circ(c, mw * 1.3, 0, mw * .14); c.fill(); c.fillRect(mw * .7, -mw * .04, mw * .6, mw * .08);
+    c.restore();
+    c.fillStyle = INK; ell(c, 0, my, mw * .2, mw * .16); c.fill();
+  } else { c.fillStyle = INK; ell(c, 0, my, mw * .22, mw * .25); c.fill(); }
+}
+// vestiti sul corpo (ritagliati sulla forma della pancia, dal collo in giù)
+function drawOutfit(c, s, P, o) {
+  const [cx, cy, rx, ry] = P.bodyE;
+  c.save(); ell(c, cx * s, cy * s, rx * s * 1.01, ry * s * 1.01); c.clip();
+  c.fillStyle = o.col; c.fillRect(-s * 1.2, P.neck * s, s * 2.4, s * 2);
+  if (o.type === 'pigiama') { c.fillStyle = 'rgba(255,255,255,.6)'; for (let y = P.neck; y < cy + ry; y += .16) c.fillRect(-s * 1.2, y * s, s * 2.4, s * .07); } // righe
+  if (o.type === 'maglietta') { c.fillStyle = '#ffd166'; starPath(c, 0, (P.neck + (cy + ry - P.neck) * .38) * s, s * .13, 0); c.fill(); }
+  if (o.type === 'tuta') { // tuta comoda per casa: tasca e cerniera
+    const my = (P.neck + (cy + ry - P.neck) * .62) * s;
+    c.fillStyle = 'rgba(255,255,255,.4)'; rr2(c, -s * .2, my - s * .05, s * .4, s * .18, s * .06); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = Math.max(1.5, s * .025); c.beginPath(); c.moveTo(0, P.neck * s); c.lineTo(0, my - s * .05); c.stroke();
+  }
+  c.fillStyle = 'rgba(255,255,255,.35)'; ell(c, 0, P.neck * s, s * .28, s * .07); c.fill(); // colletto
+  c.restore();
+}
+function rr2(c, x, y, w, h, r) { r = Math.min(r, w / 2, h / 2); c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+
+// =========================================================
+//  CUCCIOLO COMPLETO con il linguaggio del corpo
+//  pose: valori numerici (anche interpolati) — m: emozione (per occhi, bocca, effetti)
+// =========================================================
+function poseOf(m) { return { hands: m.hands.map(h => h.slice()), ears: m.ears, tail: m.tail, tilt: m.tilt, squash: m.squash }; }
+function drawPet(c, kind, x, y, s, m, t, pose, extra) {
+  const P = PETS[kind], F = P.face, fx = m.fx || [], ps = pose || poseOf(m), ex = extra || {};
+  let dx = 0, dy = 0;
+  if (m.bounce) dy -= Math.abs(Math.sin(t * 5)) * s * m.bounce;
+  if (m.wiggle) dx += Math.sin(t * 14) * s * m.wiggle;
+  if (m.shiver) dx += Math.sin(t * 60) * s * m.shiver;
+  dy -= Math.sin(clamp(ex.jump || 0, 0, 1) * Math.PI) * s * .3;
+  const walk = ex.walk || 0; // 0 fermo → 1 cammina: saltello a ogni passo, piedi alternati, testa che dondola
+  if (walk) dy -= Math.abs(Math.sin(t * 8)) * s * .07 * walk;
+  const breath = m.breath ? Math.sin(t * 1.6) * .03 : Math.sin(t * 2.4) * .012;
+  const tilt = ps.tilt + (m.sway ? Math.sin(t * 1.5) * m.sway : 0) + Math.sin(t * 4) * .06 * walk;
+  const wag = Math.sin(t * (m.wag || 0)) * .08 * (m.wag ? 1 : 0);
+  // ombra (e pozzetta, se si è fatto la pipì addosso)
+  c.fillStyle = 'rgba(0,0,0,.1)'; ell(c, x, y + s * 1.05, s * .75, s * .12); c.fill();
+  if (fx.includes('puddle')) { c.fillStyle = 'rgba(255,224,102,.55)'; ell(c, x + s * .1, y + s * 1.08, s * .85, s * .17); c.fill(); c.fillStyle = 'rgba(255,255,255,.5)'; ell(c, x - s * .2, y + s * 1.05, s * .18, s * .04); c.fill(); }
+  c.save(); c.translate(x + dx, y + dy + s); c.scale(1 + breath * .5, ps.squash - breath); c.translate(0, -s); // si "affloscia" verso il basso
+  // coda (dietro)
+  P.tail(c, s, (ps.tail + 1) / 2, wag);
+  if (ex.bag) { c.fillStyle = '#7fc8f0'; rr2(c, -s * P.bodyE[2] * 1.15, s * (P.bodyE[1] - P.bodyE[3] * .7), s * P.bodyE[2] * 2.3, s * P.bodyE[3] * 1.1, s * .16); c.fill(); } // zainetto dietro la schiena (spunta ai lati)
+  // gambe e piedi
+  if (!P.flipper) {
+    const fc = kind === 'scoiattolo' ? P.dark : P.light;
+    if (m.legs === 'crossed') { // gambe incrociate: deve fare la pipì
+      limb(c, s, -.22, .78, .1, .98, 0, .16, P.fur); limb(c, s, .22, .78, -.1, .98, 0, .16, P.fur);
+      c.fillStyle = fc; ell(c, s * .12, s * .99, s * .17, s * .09, -.2); c.fill(); ell(c, -s * .12, s * 1.0, s * .17, s * .09, .2); c.fill();
+    } else if (m.legs === 'stomp') { // batte il piede
+      const up = Math.max(0, Math.sin(t * 9)) * .14;
+      c.fillStyle = fc; ell(c, -s * .3, s * (.98 - up), s * .2, s * .1); c.fill(); ell(c, s * .3, s * .98, s * .2, s * .1); c.fill();
+    } else {
+      const lu = walk * Math.max(0, Math.sin(t * 8)) * .12, ru = walk * Math.max(0, -Math.sin(t * 8)) * .12; // un piede alla volta
+      c.fillStyle = fc; ell(c, -s * .3, s * (.98 - lu), s * .2, s * .1); c.fill(); ell(c, s * .3, s * (.98 - ru), s * .2, s * .1); c.fill();
+    }
+  }
+  P.body(c, s);
+  if (ex.outfit) drawOutfit(c, s, P, ex.outfit); // pigiama / maglietta
+  if (fx.includes('mess')) { c.fillStyle = 'rgba(150,105,70,.6)'; ell(c, 0, s * .88, s * .3, s * .14); c.fill(); ell(c, s * .14, s * .78, s * .12, s * .08); c.fill(); } // macchia sul sederino (sopra il corpo, così si vede)
+  if (ex.bag) { c.strokeStyle = '#4f9fd6'; c.lineWidth = s * .07; c.lineCap = 'round'; for (const sx of [-1, 1]) { c.beginPath(); c.moveTo(sx * s * P.shoulder[0] * .75, s * (P.shoulder[1] - .08)); c.lineTo(sx * s * P.shoulder[0] * .55, s * (P.shoulder[1] + .45)); c.stroke(); } } // bretelle dello zainetto
+  if (fx.includes('dirt')) { c.fillStyle = 'rgba(150,105,70,.55)'; for (const [a, b, r] of [[-.3, .4, .1], [.25, .65, .08], [-.05, .15, .05], [.35, .25, .06]]) { ell(c, s * a, s * b, s * r * 1.3, s * r); c.fill(); } }
+  // testa (si inclina intorno al collo)
+  c.save(); c.translate(0, s * .1); c.rotate(tilt); c.translate(0, -s * .1);
+  P.head(c, s, ps.ears);
+  if (fx.includes('dirt')) { c.fillStyle = 'rgba(150,105,70,.5)'; ell(c, s * .35, s * -.85, s * .08, s * .06); c.fill(); ell(c, -s * .42, s * -.3, s * .06, s * .05); c.fill(); }
+  const cheek = fx.includes('blue') ? 'rgba(127,180,255,.6)' : m.blush || ex.pet ? 'rgba(255,130,165,.6)' : 'rgba(255,150,180,.3)';
+  const big = fx.includes('blushBig') || fx.includes('puff'); // vergogna: rosso acceso; rabbia: guance gonfie
+  const cheekCol = fx.includes('green') ? 'rgba(150,200,110,.65)' : fx.includes('fever') ? 'rgba(255,90,90,.7)' : fx.includes('puff') ? 'rgba(255,110,110,.6)' : fx.includes('blushBig') ? 'rgba(255,110,150,.7)' : cheek;
+  if (fx.includes('green')) { c.fillStyle = 'rgba(170,215,140,.25)'; ell(c, 0, F.eyeY * s + s * .15, s * .55, s * .4); c.fill(); } // faccina un po' verde
+  c.fillStyle = cheekCol; ell(c, -F.cheekDX * s, F.cheekY * s, s * (big ? .15 : .1), s * (big ? .1 : .06)); c.fill(); ell(c, F.cheekDX * s, F.cheekY * s, s * (big ? .15 : .1), s * (big ? .1 : .06)); c.fill();
+  const look = m.look || [0, 0];
+  drawEyes(c, s, F, ex.pet ? 'happy' : m.eyes, ex.blink, ex.look || look);
+  drawBrows(c, s, F, ex.pet ? 'up' : m.brows);
+  drawMouth(c, s, F, ex.pet || ex.jump > 0 ? 'big' : m.mouth, t);
+  if (m.wrinkle) { c.strokeStyle = 'rgba(90,74,106,.55)'; c.lineWidth = Math.max(1.5, s * .02); for (const k of [-1, 0, 1]) { c.beginPath(); c.moveTo(s * (k * .04 - .03), s * (F.noseY - .1 + k * .0)); c.lineTo(s * (k * .04 + .03), s * (F.noseY - .06)); c.stroke(); } }
+  if (m.tear) { const p = (t * .45) % 1, tx = -F.eyeDX * s - F.eyeR * s * .4, ty = (F.eyeY + F.eyeR * 1.2) * s + p * s * .35; c.globalAlpha = 1 - p * .6; c.fillStyle = '#8fd3ff'; dropPath(c, tx, ty, s * .045); c.fill(); c.globalAlpha = 1; }
+  if (fx.includes('sweat')) { const p = (t * .5) % 1; c.fillStyle = 'rgba(143,211,255,.95)'; dropPath(c, s * (F.cheekDX + .22), (F.eyeY - .1) * s + p * s * .3, s * .05); c.fill(); }
+  if (fx.includes('icepack')) { // borsa del ghiaccio in testa
+    c.save(); c.translate(-s * .1, (F.top + .17) * s); c.rotate(-.15);
+    c.fillStyle = '#9fd8ff'; rr2(c, -s * .3, -s * .1, s * .6, s * .2, s * .1); c.fill();
+    c.fillStyle = 'rgba(255,255,255,.6)'; ell(c, -s * .12, -s * .04, s * .1, s * .03); c.fill();
+    c.fillStyle = '#ffadc8'; rr2(c, s * .26, -s * .05, s * .1, s * .1, s * .03); c.fill();
+    c.restore();
+  }
+  c.restore();
+  // braccia (davanti): dove vanno le mani racconta l'emozione
+  ps.hands.forEach((h, i) => {
+    const side = i === 0 ? -1 : 1; let hx = h[0], hy = h[1];
+    if (m.swing) hy += Math.sin(t * 2 + i * Math.PI) * m.swing;
+    if (walk) { hy += Math.sin(t * 8 + i * Math.PI) * .1 * walk; hx += side * .05 * walk; } // braccia che dondolano camminando
+    if (m.wave) hx += Math.sin(t * 8 + i * Math.PI) * m.wave;
+    if (m.reach) hy += Math.sin(t * 2.5) * .05;
+    if (m.rub && i === 1) { hx += Math.cos(t * 7) * .05; hy += Math.sin(t * 7) * .04; }
+    if (m.scratch && i === 1) hx += Math.sin(t * 22) * .05;
+    if (m.fan && i === 1) { hx += Math.sin(t * 10) * .09; }
+    if (m.peek) hy += Math.max(0, Math.sin(t * 1.3 + i)) * .12; // sbircia da dietro le mani
+    if (m.rubBelly) { hx += Math.cos(t * 3 + i * Math.PI) * .06; hy += Math.sin(t * 3 + i * Math.PI) * .04; } // si massaggia la pancia
+    const sx0 = side * P.shoulder[0], sy0 = P.shoulder[1];
+    if (P.flipper) { // pinna: un ovale che punta verso la "mano"
+      const ddx = hx - sx0, ddy = hy - sy0, L = Math.min(.62, Math.hypot(ddx, ddy)), a = Math.atan2(ddy, ddx);
+      c.fillStyle = P.dark; ell(c, s * (sx0 + Math.cos(a) * L / 2), s * (sy0 + Math.sin(a) * L / 2), s * L / 2 + s * .05, s * P.armW / 2, a); c.fill();
+    } else {
+      limb(c, s, sx0, sy0, hx, hy, side * .1, P.armW, P.arm || P.fur); // un po' più scure: si vedono anche davanti alla pancia e alla coda
+      c.fillStyle = P.hand; circ(c, s * hx, s * hy, s * P.handR); c.fill();
+    }
+    if (fx.includes('dirtyHands')) { // manine macchiate di fango
+      const hr = s * Math.max(.09, P.handR || .1), ex2 = P.flipper ? s * (sx0 + (hx - sx0) * .8) : s * hx, ey2 = P.flipper ? s * (sy0 + (hy - sy0) * .8) : s * hy;
+      c.fillStyle = 'rgba(150,105,70,.7)'; circ(c, ex2 - hr * .3, ey2 - hr * .2, hr * .45); c.fill(); circ(c, ex2 + hr * .35, ey2 + hr * .25, hr * .35); c.fill();
+    }
+  });
+  c.restore();
+  // effetti intorno
+  const top = y + dy + F.top * s;
+  if (fx.includes('zzz')) { c.textAlign = 'center'; for (let i = 0; i < 3; i++) { const p = ((t * .35 + i / 3) % 1); c.globalAlpha = 1 - p; c.fillStyle = '#6a7bd1'; c.font = `bold ${Math.round(s * (.2 + p * .25))}px "Comic Sans MS",sans-serif`; c.fillText('z', x + s * (.5 + p * .5), top + s * .2 - p * s * .7); } c.globalAlpha = 1; }
+  if (fx.includes('stink')) {
+    c.strokeStyle = 'rgba(140,190,90,.75)'; c.lineWidth = Math.max(2, s * .03);
+    for (let i = -1; i <= 1; i++) { c.beginPath(); for (let k = 0; k <= 8; k++) { const yy = top - k * s * .05, xx = x + i * s * .3 + Math.sin(t * 4 + k * .8 + i) * s * .05; k ? c.lineTo(xx, yy) : c.moveTo(xx, yy); } c.stroke(); }
+    const fa = t * 3, fxp = x + Math.cos(fa) * s * .95, fyp = top + s * .35 + Math.sin(fa * 1.3) * s * .25; // moschino
+    c.fillStyle = INK; circ(c, fxp, fyp, s * .028); c.fill(); c.fillStyle = 'rgba(255,255,255,.85)'; ell(c, fxp - s * .025, fyp - s * .035, s * .028, s * .016, -.5); c.fill(); ell(c, fxp + s * .025, fyp - s * .035, s * .028, s * .016, .5); c.fill();
+  }
+  if (fx.includes('steam')) for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) { // sbuffi di vapore dalla testa
+    const p = ((t * .9 + k * .5 + (sx > 0 ? .25 : 0)) % 1); c.globalAlpha = .8 * (1 - p); c.fillStyle = '#fff'; c.strokeStyle = 'rgba(150,150,180,.5)'; c.lineWidth = 1.5;
+    circ(c, x + sx * s * (.55 + p * .35), top + s * .35 - p * s * .45, s * (.07 + p * .07)); c.fill(); c.stroke(); c.globalAlpha = 1;
+  }
+  if (fx.includes('mess')) { c.strokeStyle = 'rgba(140,190,90,.6)'; c.lineWidth = Math.max(2, s * .025); for (const i of [-1, 1]) { c.beginPath(); for (let k = 0; k <= 5; k++) { const yy = y + dy + s * .75 - k * s * .06, xx = x + i * s * .7 + Math.sin(t * 4 + k) * s * .04; k ? c.lineTo(xx, yy) : c.moveTo(xx, yy); } c.stroke(); } }
+  if (fx.includes('stars')) for (let i = 0; i < 3; i++) { const a = t * 2 + i * TAU / 3; c.fillStyle = RAINBOW[i * 2]; starPath(c, x + Math.cos(a) * s * 1.15, y + dy - s * .2 + Math.sin(a) * s * .35, s * .08, t); c.fill(); }
+  if (fx.includes('rumble') && (t % 2.6) < .9) { c.strokeStyle = 'rgba(90,74,106,.55)'; c.lineWidth = Math.max(2, s * .025); for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) { c.beginPath(); c.arc(x + dx + sx * s * .45, y + dy + s * .45, s * (.42 + k * .1), sx > 0 ? -.5 : Math.PI - .5, sx > 0 ? .5 : Math.PI + .5); c.stroke(); } }
+  if (fx.includes('snow')) for (let i = 0; i < 4; i++) { const p = (t * .25 + i / 4) % 1, xx = x + (i - 1.5) * s * .6, yy = top - s * .1 + p * s * 1.3; c.strokeStyle = 'rgba(150,195,255,.85)'; c.lineWidth = 2; for (let k = 0; k < 3; k++) { const a = k * Math.PI / 3; c.beginPath(); c.moveTo(xx - Math.cos(a) * s * .06, yy - Math.sin(a) * s * .06); c.lineTo(xx + Math.cos(a) * s * .06, yy + Math.sin(a) * s * .06); c.stroke(); } }
+  return { top, x: x + dx };
+}
+function drawThought(c, x, topY, s, icon, t) {
+  if (!icon) return;
+  const bob = Math.sin(t * 2) * s * .05, cx = x + s * 1.05, cy = topY - s * .25 + bob, r = s * .42;
+  c.fillStyle = '#fff'; c.strokeStyle = 'rgba(106,123,209,.35)'; c.lineWidth = Math.max(2, s * .02);
+  for (const [px, py, pr] of [[x + s * .45, topY + s * .25, s * .06], [x + s * .64, topY + s * .08, s * .09]]) { circ(c, px, py + bob, pr); c.fill(); c.stroke(); }
+  circ(c, cx, cy, r); c.fill(); c.stroke();
+  c.font = `${Math.round(s * .46)}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(icon, cx, cy + s * .02);
+}
+// ----- fine parte copiata -----
+
+// =========================================================
+//  MOMENTI DEL GIORNO: cielo nella finestra e luce della stanza
+// =========================================================
+const TIMES = {
+  mattina:    { sky: ['#bfe6ff', '#fff1c4'], wall: ['#fff3e0', '#ffe9d6'], orb: 'sun',  dark: 0 },
+  pomeriggio: { sky: ['#8fd3ff', '#d6f1ff'], wall: ['#fff6e8', '#ffeedd'], orb: 'sun',  dark: 0 },
+  sera:       { sky: ['#c3a6ff', '#ffb38a'], wall: ['#ffe6d6', '#f6d2c4'], orb: 'set',  dark: .12 },
+  notte:      { sky: ['#2b2d5c', '#4b3f7a'], wall: ['#d8d4f0', '#c9c2e6'], orb: 'moon', dark: .38 },
+};
+
+// =========================================================
+//  STATO (salvato sul dispositivo: cucciolo scelto)
+// =========================================================
+let W = 0, H = 0, DPR = 1, L = {};
+let started = false, scene = 'choose'; // 'choose' | 'room'
+let timeKey = 'mattina';
+const pet = { kind: null, mood: 'felice', pose: poseOf(MOODS.felice), blink: 0, nextBlink: 2, jump: 0, pet: 0, look: [0, 0], arrive: 0, idleT: 0, needT: 9,
+              x: 0, tx: 0, walk: 0, pauseT: 1.5, atCenter: true }; // x = dove si trova nella stanza (gironzola quando sta bene)
+let parts = [], texts = [];
+let save = {};
+try { save = JSON.parse(localStorage.getItem('lolo-cucciolo') || '{}') || {}; } catch (e) { save = {}; }
+const saveNow = () => { try { localStorage.setItem('lolo-cucciolo', JSON.stringify(save)); } catch (e) {} };
+if (PETS[save.kind]) pet.kind = save.kind;
+
+function layout() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  const s = clamp(Math.min(W * .14, H * .15), 44, 155), barH = clamp(H * .14, 78, 124);
+  L = { floorY: H * .6, petX: W * .5, petY: Math.min(H * .64, H - barH - 22 - s * 1.45), s, barH, // il tappeto resta sopra la barra
+        win: { x: W * .07, y: H * .1, w: Math.min(W * .3, H * .38), h: H * .32 },
+        bed: { x: W * .7, y: H * .52, w: Math.min(W * .27, H * .44), h: H * .18 } };
+  if (W < H * .8) { L.win.w = W * .42; L.bed.x = W * .6; L.bed.w = W * .37; L.petX = W * .42; } // schermo stretto (verticale)
+  L.walkMin = Math.max(L.s * 1.2, W * .12); L.walkMax = Math.min(W - L.s * 1.2, W * .88); // dove può passeggiare
+  pet.x = pet.x ? clamp(pet.x, L.walkMin, L.walkMax) : L.petX; pet.tx = clamp(pet.tx || pet.x, L.walkMin, L.walkMax);
+}
+
+// =========================================================
+//  CAMERETTA
+// =========================================================
+let worldFade = 0; // dissolvenza al cambio stanza
+function makeRoomDeco() {}
+const OUTFIT_COL = { pigiama: '#a0c4ff', maglietta: '#ffadad', tuta: '#a8e6a1' };
+function drawRoom(t) {
+  if (R.trip || R.room === 'fuori') return drawFuori(t);
+  if (R.room === 'cucina') return drawCucina(t); if (R.room === 'bagno') return drawBagno(t); if (R.room === 'parco') return drawParco(t);
+  return drawCamera(t);
+}
+function drawBagno(t) { // piastrelle azzurre, lavandino con lo specchio, vasca con la paperella, asciugamano
+  ctx.fillStyle = '#e3f2ff'; ctx.fillRect(0, 0, W, L.floorY);
+  ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2; for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, L.floorY * .45); ctx.lineTo(x, L.floorY); ctx.stroke(); } for (let y = L.floorY * .45; y < L.floorY; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.fillStyle = '#bde0fe'; ctx.fillRect(0, L.floorY * .45 - 6, W, 6);
+  const sx = W * .14, sw = Math.min(W * .16, H * .22); // specchio e lavandino
+  ctx.fillStyle = '#ffffff'; rr(ctx, sx, H * .1, sw, H * .22, sw * .5); ctx.fill(); strokeOut();
+  ctx.fillStyle = 'rgba(191,233,255,.7)'; rr(ctx, sx + 8, H * .1 + 8, sw - 16, H * .22 - 16, sw * .45); ctx.fill();
+  ctx.fillStyle = '#ffffff'; rr(ctx, sx - sw * .1, L.floorY - H * .2, sw * 1.2, H * .06, 12); ctx.fill(); strokeOut();
+  ctx.fillStyle = '#e4e0d8'; rr(ctx, sx + sw * .35, L.floorY - H * .14, sw * .3, H * .14, 8); ctx.fill(); strokeOut(2);
+  ctx.fillStyle = '#c8cdd8'; rr(ctx, sx + sw * .45, L.floorY - H * .25, sw * .1, H * .06, 4); ctx.fill(); // rubinetto
+  emo('🧴', sx + sw * .95, L.floorY - H * .23, H * .045);
+  const tx = W * .66, tw = Math.min(W * .28, H * .42); // vasca con la paperella
+  ctx.fillStyle = '#ffffff'; rr(ctx, tx, L.floorY - H * .16, tw, H * .2, H * .08); ctx.fill(); strokeOut();
+  ctx.fillStyle = 'rgba(255,255,255,.95)'; for (let i = 0; i < 6; i++) { circ(ctx, tx + tw * (.15 + i * .14), L.floorY - H * .16 + Math.sin(t * 2 + i) * 3, H * .025); ctx.fill(); } // schiuma
+  emo('🦆', tx + tw * .7, L.floorY - H * .19, H * .05);
+  ctx.fillStyle = '#ff9fb6'; rr(ctx, W * .42, H * .18, W * .06, H * .2, 8); ctx.fill(); ctx.fillStyle = '#c8cdd8'; ctx.fillRect(W * .405, H * .17, W * .09, 6); // asciugamano
+  drawFloor('#dfe9f3', '#cbd9e8', false);
+  ctx.fillStyle = 'rgba(255,255,255,.4)'; for (let x = 0; x < W; x += 54) for (let y = L.floorY + 8; y < H; y += 54) if (((x + y) / 54) % 2 < 1) ctx.fillRect(x, y, 54, 27);
+  ctx.fillStyle = '#ffc8dd'; ell(ctx, L.petX, L.petY + L.s * 1.05, L.s * 1.4, L.s * .3); ctx.fill(); // tappetino
+}
+function drawParco(t) { // prato, albero, altalena, scivolo e sabbiera (come i paesaggi degli altri giochi)
+  const T = TIMES[timeKey];
+  let g = ctx.createLinearGradient(0, 0, 0, L.floorY); g.addColorStop(0, T.sky[0]); g.addColorStop(1, T.sky[1]); ctx.fillStyle = g; ctx.fillRect(0, 0, W, L.floorY);
+  if (T.orb === 'sun') { ctx.fillStyle = '#ffe066'; circ(ctx, W * .85, H * .13, H * .06); ctx.fill(); }
+  ctx.fillStyle = 'rgba(255,255,255,.9)'; for (let i = 0; i < 3; i++) { const cx = ((t * 9 + i * W / 3) % (W + 160)) - 80, cy = H * (.1 + i * .06); for (const [ox, oy, r] of [[0, 0, 22], [22, 6, 16], [-22, 6, 16]]) { circ(ctx, cx + ox, cy + oy, r); ctx.fill(); } }
+  ctx.fillStyle = '#b6e3a8'; ctx.beginPath(); ctx.moveTo(0, L.floorY); for (let x = 0; x <= W; x += 40) ctx.lineTo(x, L.floorY - 24 - Math.sin(x * .012 + 1) * 16); ctx.lineTo(W, L.floorY); ctx.closePath(); ctx.fill();
+  const ax = W * .08, ah = H * .32; // albero
+  ctx.fillStyle = '#b48a64'; rr(ctx, ax + 30, L.floorY - ah * .55, 26, ah * .58, 8); ctx.fill();
+  ctx.fillStyle = '#8fd19e'; for (const [ox, oy, r] of [[43, -ah * .65, ah * .3], [10, -ah * .5, ah * .22], [76, -ah * .5, ah * .22]]) { circ(ctx, ax + ox, L.floorY + oy, r); ctx.fill(); }
+  ctx.fillStyle = '#ffadad'; for (const [ox, oy] of [[30, -ah * .7], [60, -ah * .55], [20, -ah * .45]]) { circ(ctx, ax + ox, L.floorY + oy, 6); ctx.fill(); }
+  const swx = W * .7, swh = H * .3; // altalena che dondola
+  ctx.strokeStyle = '#ff8fa3'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(swx - swh * .4, L.floorY + 10); ctx.lineTo(swx - swh * .25, L.floorY - swh); ctx.lineTo(swx + swh * .55, L.floorY - swh); ctx.lineTo(swx + swh * .7, L.floorY + 10); ctx.stroke();
+  const sa = Math.sin(t * 1.5) * .25, sl = swh * .7; ctx.strokeStyle = '#9aa3b5'; ctx.lineWidth = 3;
+  const seatX = swx + swh * .15 + Math.sin(sa) * sl, seatY = L.floorY - swh + Math.cos(sa) * sl;
+  ctx.beginPath(); ctx.moveTo(swx + swh * .05, L.floorY - swh); ctx.lineTo(seatX - 14, seatY); ctx.moveTo(swx + swh * .25, L.floorY - swh); ctx.lineTo(seatX + 14, seatY); ctx.stroke();
+  ctx.fillStyle = '#ffd166'; rr(ctx, seatX - 22, seatY - 4, 44, 10, 5); ctx.fill();
+  drawFloor('#c8e6c1', '#b4dcae', false);
+  ctx.fillStyle = '#f6dfa8'; ell(ctx, W * .2, L.floorY + (H - L.floorY) * .5, W * .1, (H - L.floorY) * .18); ctx.fill(); emo('🪣', W * .2, L.floorY + (H - L.floorY) * .45, L.s * .4); // sabbiera
+  drawParkThing(t); // il gioco del "suo" cucciolo
+}
+const bedPetX = () => L.bed.x + L.bed.w * .36; // il cucciolo che dorme nel lettino, con la testa sul cuscino
+function curtainsOpen() { const a = pet.action; return a && a.act === 'wake' ? ease(Math.min(1, a.t / a.dur * 1.4)) : R.curtains; }
+function drawWindow(t, w, open) { // finestra con il cielo del momento e le tende (open 0 = chiuse)
+  const T = TIMES[timeKey];
+  ctx.fillStyle = '#fff'; rr(ctx, w.x - 10, w.y - 10, w.w + 20, w.h + 20, 18); ctx.fill();
+  ctx.save(); rr(ctx, w.x, w.y, w.w, w.h, 12); ctx.clip();
+  const g = ctx.createLinearGradient(0, w.y, 0, w.y + w.h); g.addColorStop(0, T.sky[0]); g.addColorStop(1, T.sky[1]);
+  ctx.fillStyle = g; ctx.fillRect(w.x, w.y, w.w, w.h);
+  if (T.orb === 'sun') { ctx.fillStyle = '#ffe066'; circ(ctx, w.x + w.w * .7, w.y + w.h * .3, w.h * .13); ctx.fill(); }
+  if (T.orb === 'set') { ctx.fillStyle = '#ffb347'; circ(ctx, w.x + w.w * .5, w.y + w.h * .95, w.h * .18); ctx.fill(); }
+  if (T.orb === 'moon') { for (let i = 0; i < 9; i++) { const sx = w.x + w.w * ((i * .37 + .08) % 1), sy = w.y + w.h * ((i * .53 + .1) % .85); ctx.fillStyle = `rgba(255,243,196,${.45 + .55 * Math.abs(Math.sin(t * 1.5 + i * 1.7))})`; starPath(ctx, sx, sy, w.h * .035, 0); ctx.fill(); } } // stelline che brillano
+  if (T.orb === 'moon') { ctx.fillStyle = '#fff3c4'; circ(ctx, w.x + w.w * .7, w.y + w.h * .3, w.h * .12); ctx.fill(); ctx.fillStyle = T.sky[0]; circ(ctx, w.x + w.w * .75, w.y + w.h * .26, w.h * .1); ctx.fill(); }
+  else { ctx.fillStyle = 'rgba(255,255,255,.9)'; const cx = w.x + ((t * 8) % (w.w + 80)) - 40; for (const [ox, oy, r] of [[0, 0, 14], [14, 4, 11], [-14, 4, 11]]) { circ(ctx, cx + ox, w.y + w.h * .55 + oy, r); ctx.fill(); } }
+  ctx.restore();
+  ctx.fillStyle = '#fff'; ctx.fillRect(w.x + w.w / 2 - 4, w.y, 8, w.h); ctx.fillRect(w.x, w.y + w.h / 2 - 4, w.w, 8);
+  const cw = lerp(w.w / 2 + 24, 28, open); ctx.fillStyle = '#ffc8dd';
+  ctx.beginPath(); ctx.moveTo(w.x - 22, w.y - 18); ctx.lineTo(w.x - 22 + cw, w.y - 18); ctx.quadraticCurveTo(w.x - 22 + cw * .4, w.y + w.h * .6, w.x - 22 + cw, w.y + w.h + 24); ctx.lineTo(w.x - 22, w.y + w.h + 24); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(w.x + w.w + 22, w.y - 18); ctx.lineTo(w.x + w.w + 22 - cw, w.y - 18); ctx.quadraticCurveTo(w.x + w.w + 22 - cw * .4, w.y + w.h * .6, w.x + w.w + 22 - cw, w.y + w.h + 24); ctx.lineTo(w.x + w.w + 22, w.y + w.h + 24); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffadc8'; rr(ctx, w.x - 30, w.y - 26, w.w + 60, 12, 6); ctx.fill();
+}
+function drawFloor(c1, c2, lines) {
+  const g = ctx.createLinearGradient(0, L.floorY, 0, H); g.addColorStop(0, c1); g.addColorStop(1, c2);
+  ctx.fillStyle = g; ctx.fillRect(0, L.floorY, W, H - L.floorY);
+  if (lines) { ctx.strokeStyle = 'rgba(160,110,60,.15)'; ctx.lineWidth = 2; for (let y = L.floorY + 24; y < H; y += 34) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); } }
+  ctx.fillStyle = 'rgba(0,0,0,.06)'; ctx.fillRect(0, L.floorY, W, 8);
+}
+function drawCucina(t) { // piastrelle, finestra, frigo, tavolo con la tovaglia
+  ctx.fillStyle = '#e9f7ef'; ctx.fillRect(0, 0, W, L.floorY);
+  ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; for (let x = 0; x < W; x += 46) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, L.floorY); ctx.stroke(); } for (let y = 0; y < L.floorY; y += 46) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  drawWindow(t, { x: W * .42, y: H * .08, w: Math.min(W * .22, H * .3), h: H * .24 }, 1);
+  const fx = W * .06, fw = Math.min(W * .14, H * .2); // frigo
+  ctx.fillStyle = '#ffffff'; rr(ctx, fx, L.floorY - H * .42, fw, H * .42, 16); ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.stroke();
+  ctx.fillStyle = '#c8cdd8'; ctx.fillRect(fx + fw * .78, L.floorY - H * .36, 6, H * .08); ctx.fillRect(fx + fw * .78, L.floorY - H * .2, 6, H * .1);
+  ctx.fillStyle = '#ffadad'; circ(ctx, fx + fw * .3, L.floorY - H * .34, 7); ctx.fill(); ctx.fillStyle = '#a0c4ff'; circ(ctx, fx + fw * .5, L.floorY - H * .3, 6); ctx.fill(); // calamite
+  drawFloor('#f6e3c6', '#ecd0aa', false);
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; for (let x = 0; x < W; x += 60) for (let y = L.floorY + 10; y < H; y += 60) if (((x + y) / 60) % 2 < 1) ctx.fillRect(x, y, 60, 30);
+  const tx = W * .72, ty = L.floorY + 10, tw = Math.min(W * .24, H * .36); // tavolo con la tovaglia a quadretti
+  ctx.fillStyle = '#d9a066'; ctx.fillRect(tx + tw * .1, ty, 12, H * .14); ctx.fillRect(tx + tw * .85, ty, 12, H * .14);
+  ctx.fillStyle = '#ff8fa3'; rr(ctx, tx, ty - 22, tw, 30, 10); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.6)'; for (let i = 0; i < 6; i++) ctx.fillRect(tx + i * tw / 6, ty - 22, tw / 12, 30);
+  emo('🍓', tx + tw * .3, ty - 34, 26); emo('🥛', tx + tw * .65, ty - 38, 30);
+}
+function drawFuori(t) { // davanti a casa: cielo, prato, la porta di casa, la fermata del bus
+  const T = TIMES[timeKey];
+  let g = ctx.createLinearGradient(0, 0, 0, L.floorY); g.addColorStop(0, T.sky[0]); g.addColorStop(1, T.sky[1]); ctx.fillStyle = g; ctx.fillRect(0, 0, W, L.floorY);
+  if (T.orb === 'sun') { ctx.fillStyle = '#ffe066'; circ(ctx, W * .82, H * .14, H * .06); ctx.fill(); }
+  ctx.fillStyle = 'rgba(255,255,255,.9)'; for (let i = 0; i < 3; i++) { const cx = ((t * 10 + i * W / 3) % (W + 160)) - 80, cy = H * (.12 + i * .07); for (const [ox, oy, r] of [[0, 0, 24], [24, 6, 18], [-24, 6, 18]]) { circ(ctx, cx + ox, cy + oy, r); ctx.fill(); } }
+  ctx.fillStyle = '#a8e6a1'; ctx.beginPath(); ctx.moveTo(0, L.floorY); for (let x = 0; x <= W; x += 40) ctx.lineTo(x, L.floorY - 18 - Math.sin(x * .01) * 14); ctx.lineTo(W, L.floorY); ctx.closePath(); ctx.fill(); // colline
+  const hx = W * .04, hw = Math.min(W * .28, H * .38), hy = L.floorY - hw * .9; // casa
+  ctx.fillStyle = '#ffe3c2'; rr(ctx, hx, hy, hw, hw * .9, 10); ctx.fill();
+  ctx.fillStyle = '#ff8fa3'; ctx.beginPath(); ctx.moveTo(hx - 14, hy + 4); ctx.lineTo(hx + hw / 2, hy - hw * .4); ctx.lineTo(hx + hw + 14, hy + 4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#c3a6ff'; rr(ctx, hx + hw * .38, hy + hw * .42, hw * .24, hw * .48, 10); ctx.fill(); ctx.fillStyle = '#ffd166'; circ(ctx, hx + hw * .56, hy + hw * .68, 4); ctx.fill();
+  ctx.fillStyle = '#bde0fe'; rr(ctx, hx + hw * .08, hy + hw * .2, hw * .22, hw * .2, 6); ctx.fill(); rr(ctx, hx + hw * .7, hy + hw * .2, hw * .22, hw * .2, 6); ctx.fill();
+  drawFloor('#c8e6c1', '#b4dcae', false);
+  ctx.fillStyle = '#e4e0d8'; ctx.fillRect(0, L.petY + L.s * .95, W, L.s * .35); // marciapiede
+  const sx = W * .86; ctx.fillStyle = '#9aa3b5'; ctx.fillRect(sx, L.floorY - H * .28, 8, H * .28 + 30); // fermata del bus
+  ctx.fillStyle = '#8fd3ff'; circ(ctx, sx + 4, L.floorY - H * .28, 26); ctx.fill(); emo('🚌', sx + 4, L.floorY - H * .28, 26);
+}
+function drawCamera(t) {
+  const T = TIMES[timeKey], w = L.win;
+  let g = ctx.createLinearGradient(0, 0, 0, L.floorY); g.addColorStop(0, T.wall[0]); g.addColorStop(1, T.wall[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, L.floorY);
+  ctx.fillStyle = 'rgba(255,255,255,.4)'; for (let y = 30; y < L.floorY - 20; y += 56) for (let x = (y / 56 % 2) * 28 + 18; x < W; x += 56) { circ(ctx, x, y, 4.5); ctx.fill(); } // carta da parati a pois
+  drawWindow(t, w, curtainsOpen()); // finestra con il cielo del momento (la mattina le tende sono chiuse finché non lo svegli)
+  drawPoster(t);
+  // pavimento in legno chiaro
+  g = ctx.createLinearGradient(0, L.floorY, 0, H); g.addColorStop(0, '#f3d2a8'); g.addColorStop(1, '#e8c08e');
+  ctx.fillStyle = g; ctx.fillRect(0, L.floorY, W, H - L.floorY);
+  ctx.strokeStyle = 'rgba(160,110,60,.15)'; ctx.lineWidth = 2; for (let y = L.floorY + 24; y < H; y += 34) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(0,0,0,.06)'; ctx.fillRect(0, L.floorY, W, 8);
+  // tappeto tondo
+  ctx.fillStyle = '#bde0fe'; ell(ctx, L.petX, L.petY + L.s * 1.05, L.s * 1.6, L.s * .35); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.setLineDash([10, 10]); ell(ctx, L.petX, L.petY + L.s * 1.05, L.s * 1.4, L.s * .27); ctx.stroke(); ctx.setLineDash([]);
+  drawBed(L.bed, pet.inBed);
+  const cp = chestPos(); drawChest(cp.x, cp.y, cp.s, t);
+}
+const chestPos = () => ({ x: W * .05, y: L.floorY + (H - L.floorY) * .12, s: L.s * .75 });
+// =========================================================
+//  GIOCA DA SOLO (autonomia): quando sta bene va al baule e prende un gioco, o al letto e prende un libro
+// =========================================================
+const SOLO = {
+  palla: { from: 'chest', dur: 6 }, paperella: { from: 'chest', dur: 5.5 }, mattoncini: { from: 'chest', dur: 6.5 }, libro: { from: 'bed', dur: 7 },
+};
+function soloSpot(from) { // dove si mette per prendere il gioco
+  if (from === 'chest') { const c = chestPos(); return clamp(c.x + c.s * 1.7 + L.s * .9, L.walkMin, L.walkMax); }
+  return clamp(L.bed.x - L.s * .7, L.walkMin, L.walkMax);
+}
+// ogni cucciolo ha le sue cose: il poster in cameretta, il suo gioco al parco, il gioco preferito, un oggetto del cuore
+const PERSONAL = {
+  scimmietta: { poster: '🍌', park: 'tire' },                                  // altalena a ruota: si dondola
+  scoiattolo: { poster: '🌰', park: 'acorns', carry: '🌰' },                   // la sua noce sempre in mano
+  ippopotamo: { poster: '🪷', park: 'mud', fav: 'paperella' },                 // la pozzanghera di fango, la sua paperella
+  elefante:   { poster: '☁️', park: 'bubbles', balloon: true, spray: true },   // palloncino, si spruzza da solo nel bagnetto
+  foca:       { poster: '🐟', park: 'pool', fav: 'palla', noseBall: true },     // la palla in equilibrio sul naso
+};
+const ME = () => PERSONAL[pet.kind] || {};
+function startSolo() {
+  const fav = ME().fav, k = fav && Math.random() < .6 ? fav : pick(Object.keys(SOLO)), d = SOLO[k]; // il gioco preferito, più spesso
+  pet.solo = { k, phase: 'go', t: 0, dur: d.dur, from: d.from }; pet.tx = soloSpot(d.from);
+}
+function updateSolo(dt) {
+  const so = pet.solo; if (!so) return;
+  if (so.phase === 'go') { if (Math.abs(pet.x - pet.tx) < 3) { so.phase = 'take'; so.t = 0; pet.jump = .6; sfx.pop(); } return; }
+  so.t += dt;
+  if (so.phase === 'take' && so.t > .6) { so.phase = 'play'; so.t = 0; }
+  if (so.phase === 'play') {
+    const p0 = (so.t - dt) / so.dur, p1 = so.t / so.dur, at = v => p0 < v && p1 >= v;
+    if (so.k === 'palla' && [.1, .3, .5, .7, .9].some(at)) { sfx.bounce(); pet.jump = .4; }
+    if (so.k === 'paperella' && [.15, .45, .75].some(at)) { tone(900, 1300, .12, 'square', .06); tone(1100, 800, .1, 'square', .05, .13); sfx.giggle(); }
+    if (so.k === 'mattoncini' && [.2, .4, .6].some(at)) tone(700, 600, .06, 'triangle', .12);
+    if (so.k === 'mattoncini' && at(.85)) { sfx.sparkle(); pet.jump = .7; }
+    if (so.k === 'libro' && [.2, .45, .7].some(at)) noise(.12, 3000, 2000, .06, 'highpass'); // gira pagina
+    if (so.t >= so.dur) { so.phase = 'back'; so.t = 0; pet.jump = .5; sfx.pop(); } // rimette a posto
+  }
+  if (so.phase === 'back' && so.t > .5) { pet.solo = null; pet.soloCool = rand(14, 22); pet.pauseT = 1; pet.idleT = 0; }
+}
+function drawSolo(x, y, s, t) { // il gioco tra le mani (o per terra)
+  const so = pet.solo; if (!so || so.phase === 'go' || so.phase === 'back') return;
+  const u = so.phase === 'play' ? so.t / so.dur : 0;
+  if (so.k === 'libro') { emo('📖', x, y + s * .3, s * .7, Math.sin(t * 1.2) * .05); return; }
+  if (so.k === 'palla' && ME().noseBall) { drawNoseBall(x, y, s, t); return; } // la foca: palla sul naso
+  if (so.k === 'palla') { const by = y + s * .9 - Math.abs(Math.sin(u * Math.PI * 5)) * s * .9; ctx.fillStyle = '#ffadad'; circ(ctx, x + s * .95, by, s * .22); ctx.fill(); strokeOut(2); ctx.fillStyle = '#fff'; ctx.fillRect(x + s * .73, by - s * .03, s * .44, s * .06); return; }
+  if (so.k === 'paperella') { emo('🦆', x + s * .2, y + s * .3 + Math.sin(t * 6) * s * .04, s * .5, Math.sin(t * 6) * .15); return; }
+  if (so.k === 'mattoncini') { const n = Math.min(4, 1 + Math.floor(u * 4)); for (let i = 0; i < n; i++) emo('🧱', x + s * 1.0, y + s * (.95 - i * .22), s * .3); }
+}
+function drawNoseBall(x, y, s, t) { // palla colorata che salta piano sul naso
+  const F = PETS[pet.kind].face, by = y + (F.top - .22) * s - Math.abs(Math.sin(t * 5)) * s * .18, bx = x + Math.sin(t * 2.5) * s * .05;
+  ctx.fillStyle = '#ffadad'; circ(ctx, bx, by, s * .22); ctx.fill(); strokeOut(2);
+  ctx.fillStyle = '#ffd166'; ctx.fillRect(bx - s * .22, by - s * .03, s * .44, s * .06); ctx.fillStyle = '#a0c4ff'; circ(ctx, bx, by, s * .07); ctx.fill();
+}
+// le cose del cucciolo che porta con sé (sopra il disegno del cucciolo)
+function drawKeepsake(x, y, s, t) {
+  const me = ME(), busy = !!pet.action || !!pet.solo;
+  if (me.carry && !busy) emo(me.carry, x + s * .62, y + s * .48, s * .32, Math.sin(t * 2) * .1); // lo scoiattolo e la sua noce
+  if (me.balloon) { // il palloncino legato al polso
+    const bx = x + s * (.95 + Math.sin(t * 1.3) * .08), by = y - s * 1.55 + Math.sin(t * 1.7) * s * .06;
+    ctx.strokeStyle = 'rgba(90,74,106,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + s * .55, y + s * .4); ctx.quadraticCurveTo(x + s * 1.05, y - s * .5, bx, by + s * .3); ctx.stroke();
+    ctx.fillStyle = '#ff8fa3'; ell(ctx, bx, by, s * .24, s * .3); ctx.fill(); strokeOut(2);
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ell(ctx, bx - s * .08, by - s * .1, s * .05, s * .09, -.4); ctx.fill();
+    ctx.fillStyle = '#ff8fa3'; ctx.beginPath(); ctx.moveTo(bx - s * .04, by + s * .32); ctx.lineTo(bx + s * .04, by + s * .32); ctx.lineTo(bx, by + s * .27); ctx.closePath(); ctx.fill();
+  }
+}
+// poster in cameretta, sopra il tappeto: il "suo" disegno
+function drawPoster(t) {
+  const me = ME(); if (!me.poster) return;
+  const ph = H * .17, pw = ph * .8, x = W * .5 - pw / 2, y = H * .08;
+  ctx.fillStyle = 'rgba(0,0,0,.07)'; rr(ctx, x + 4, y + 5, pw, ph, 10); ctx.fill();
+  ctx.fillStyle = '#fff'; rr(ctx, x, y, pw, ph, 10); ctx.fill(); strokeOut(2);
+  ctx.fillStyle = '#fff3c4'; rr(ctx, x + pw * .08, y + ph * .07, pw * .84, ph * .86, 8); ctx.fill();
+  emo(me.poster, x + pw / 2, y + ph / 2, ph * .5, Math.sin(t * .8) * .05);
+  ctx.fillStyle = '#ff8fa3'; circ(ctx, x + pw / 2, y + 2, 5); ctx.fill(); // puntina
+}
+// il gioco del cucciolo al parco (disegnato nel paesaggio)
+function drawParkThing(t) {
+  const k = ME().park, fy = L.floorY, ah = H * .32, ax = W * .08;
+  if (k === 'tire') { // altalena a ruota appesa al ramo dell'albero
+    const hx = ax + 92, hy = fy - ah * .5, a = Math.sin(t * 1.6) * .3, len = ah * .38, tx = hx + Math.sin(a) * len, ty = hy + Math.cos(a) * len;
+    ctx.strokeStyle = '#b48a64'; ctx.lineWidth = 8; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(ax + 50, hy); ctx.lineTo(hx + 20, hy - 6); ctx.stroke(); // ramo
+    ctx.strokeStyle = '#9aa3b5'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(tx, ty - 14); ctx.stroke();
+    ctx.strokeStyle = '#5a4a6a'; ctx.lineWidth = 10; ell(ctx, tx, ty, 24, 14, a); ctx.stroke();
+  }
+  if (k === 'acorns') for (const [ox, sz] of [[0, 22], [34, 18], [70, 24], [100, 18]]) emo('🌰', ax + ox, fy + 14, sz, ox * .02);
+  if (k === 'mud') { const mx = W * .3, my = fy + (H - fy) * .42; ctx.fillStyle = '#b08968'; ell(ctx, mx, my, W * .09, (H - fy) * .12); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,.25)'; ell(ctx, mx - W * .03, my - 4, W * .03, 5); ctx.fill(); }
+  if (k === 'pool') { const px = W * .88, py = fy + (H - fy) * .4; ctx.fillStyle = '#ffadc8'; ell(ctx, px, py, W * .09, (H - fy) * .16); ctx.fill(); ctx.fillStyle = '#8fd3ff'; ell(ctx, px, py, W * .075, (H - fy) * .12); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,.6)'; ell(ctx, px - W * .02, py - 3, W * .025, 4); ctx.fill(); }
+  if (k === 'bubbles') for (let i = 0; i < 7; i++) { const p = (t * .12 + i / 7) % 1, bx = W * (.1 + i * .13) + Math.sin(t + i) * 12, by = fy - p * fy * .8; ctx.globalAlpha = 1 - p; ctx.strokeStyle = '#a0c4ff'; ctx.lineWidth = 2; circ(ctx, bx, by, 8 + (i % 3) * 5); ctx.stroke(); ctx.fillStyle = 'rgba(255,255,255,.7)'; circ(ctx, bx - 3, by - 3, 2.5); ctx.fill(); ctx.globalAlpha = 1; }
+}
+const OUT = 'rgba(90,74,106,.28)'; // contorno morbido: così letto e baule si staccano dallo sfondo
+function strokeOut(w) { ctx.strokeStyle = OUT; ctx.lineWidth = w || 3; ctx.stroke(); }
+// lettino: piedini, testiera tonda con la stellina, materasso, cuscino, coperta a pois con il risvolto, pediera
+function drawBed(b, occupied) {
+  const x = b.x, y = b.y, w = b.w, h = b.h;
+  ctx.fillStyle = 'rgba(0,0,0,.08)'; ell(ctx, x + w * .5, y + h * .98, w * .55, h * .1); ctx.fill(); // ombra
+  ctx.fillStyle = '#c98e48'; for (const fx of [.04, .9]) { rr(ctx, x + w * fx, y + h * .7, w * .07, h * .26, 6); ctx.fill(); strokeOut(2); }
+  ctx.fillStyle = '#ff9fb6'; rr(ctx, x - w * .02, y - h * .95, w * .16, h * 1.7, w * .08); ctx.fill(); strokeOut(); // testiera
+  ctx.fillStyle = '#ffd166'; starPath(ctx, x + w * .06, y - h * .55, w * .045, 0); ctx.fill();
+  ctx.fillStyle = '#ff9fb6'; rr(ctx, x + w * .88, y - h * .25, w * .12, h * 1.0, w * .06); ctx.fill(); strokeOut(); // pediera
+  ctx.fillStyle = '#e8b06a'; rr(ctx, x + w * .1, y + h * .45, w * .8, h * .3, 10); ctx.fill(); strokeOut(); // base in legno
+  ctx.fillStyle = '#ffffff'; rr(ctx, x + w * .11, y + h * .05, w * .78, h * .45, 12); ctx.fill(); strokeOut(2); // materasso
+  ctx.fillStyle = '#ffffff'; rr(ctx, x + w * .14, y - h * .22, w * .28, h * .34, 16); ctx.fill(); strokeOut(2); // cuscino
+  ctx.fillStyle = '#bde0fe'; ctx.fillRect(x + w * .16, y - h * .08, w * .24, h * .06);
+  if (!occupied) drawBlanket(b);
+}
+function drawBlanket(b) { // coperta (disegnata anche SOPRA il cucciolo quando dorme)
+  const x = b.x, y = b.y, w = b.w, h = b.h;
+  ctx.fillStyle = '#8fb8ff'; rr(ctx, x + w * .33, y - h * .02, w * .58, h * .62, 14); ctx.fill(); strokeOut();
+  ctx.fillStyle = 'rgba(255,255,255,.55)'; for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) { circ(ctx, x + w * (.45 + i * .16), y + h * (.22 + j * .22), h * .05); ctx.fill(); }
+  ctx.fillStyle = '#ffffff'; rr(ctx, x + w * .33, y - h * .02, w * .58, h * .12, 8); ctx.fill(); strokeOut(2); // risvolto
+}
+// baule dei giochi: legno, angoli di metallo, coperchio socchiuso con i giochi che spuntano
+function drawChest(x, y, s, t) {
+  const w = s * 1.7, h = s * 1.05;
+  ctx.fillStyle = 'rgba(0,0,0,.08)'; ell(ctx, x + w / 2, y + h + 4, w * .55, s * .1); ctx.fill();
+  // giochi che spuntano
+  ctx.fillStyle = '#ffadad'; circ(ctx, x + w * .3, y - s * .05, s * .28); ctx.fill(); strokeOut(2); ctx.fillStyle = '#fff'; ctx.fillRect(x + w * .3 - s * .28, y - s * .08, s * .56, s * .06); // palla
+  emo('🦆', x + w * .62, y - s * .12, s * .5); emo('🧱', x + w * .82, y - s * .02, s * .34);
+  ctx.fillStyle = '#d9a066'; rr(ctx, x, y, w, h, 12); ctx.fill(); strokeOut(); // cassa
+  ctx.strokeStyle = 'rgba(160,110,60,.35)'; ctx.lineWidth = 2; for (const fy of [.38, .7]) { ctx.beginPath(); ctx.moveTo(x + 6, y + h * fy); ctx.lineTo(x + w - 6, y + h * fy); ctx.stroke(); } // assi
+  ctx.fillStyle = '#c8cdd8'; for (const fx of [.12, .82]) { ctx.fillRect(x + w * fx, y, w * .06, h); } // fasce di metallo
+  ctx.fillStyle = '#ff8fa3'; heartPath(ctx, x + w / 2, y + h * .45, s * .13); ctx.fill(); // serratura a cuore
+  ctx.save(); ctx.translate(x, y + 2); ctx.rotate(-.22); // coperchio socchiuso
+  ctx.fillStyle = '#e8b06a'; rr(ctx, -4, -s * .32, w + 8, s * .34, 12); ctx.fill(); strokeOut();
+  ctx.fillStyle = '#c8cdd8'; for (const fx of [.12, .82]) ctx.fillRect(w * fx, -s * .32, w * .06, s * .34);
+  ctx.restore();
+}
+
+// =========================================================
+//  SCELTA DEL CUCCIOLO
+// =========================================================
+// gli amici arrivano poco alla volta: si parte con 2, poi uno nuovo ogni 2 giornate finite (la nanna della sera)
+const UNLOCK = [['scimmietta', 0], ['scoiattolo', 0], ['ippopotamo', 2], ['elefante', 4], ['foca', 6]];
+const daysDone = () => Math.max(0, (save.days || 0) - 1); // save.days conta le giornate cominciate
+function unlockedPets() { // il cucciolo già scelto resta sempre (è il suo amico)
+  return UNLOCK.filter(([k, d]) => daysDone() >= d || k === save.kind).map(([k]) => k);
+}
+function choosePos(i) {
+  const n = unlockedPets().length, s = clamp(Math.min(W * .1, H * .14, W / n * .32), 38, 120), gap = Math.min(W / n, s * 3.2);
+  return { x: W / 2 + (i - (n - 1) / 2) * gap, y: H * .5, s, gap };
+}
+function bigText(txt, y, size, col) {
+  ctx.font = `bold ${Math.round(size)}px "Comic Sans MS","Chalkboard SE",system-ui,sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 8; ctx.lineJoin = 'round'; ctx.strokeStyle = '#fff'; ctx.strokeText(txt, W / 2, y); ctx.fillStyle = col || '#ff8fb1'; ctx.fillText(txt, W / 2, y);
+}
+function drawFriend(t) { // il nuovo amico spunta dal davanzale, saltella e saluta, poi torna giù
+  const f = R.friend, w = L.win, up = Math.min(1, f.t / .6) * Math.min(1, Math.max(0, (6.5 - f.t) / .6));
+  const s = w.h * .26, x = w.x + w.w / 2, y = w.y + w.h + s * .3 - up * s * 1.6 - Math.abs(Math.sin(f.t * 4)) * s * .15;
+  ctx.save(); rr(ctx, w.x, w.y, w.w, w.h, 12); ctx.clip();
+  drawPet(ctx, f.k, x, y, s, MOODS.felice, t, null, { pet: true });
+  ctx.restore();
+  ctx.fillStyle = `rgba(255,209,102,${.6 + Math.sin(t * 6) * .3})`; for (let i = 0; i < 5; i++) { const a = t * 1.5 + i * TAU / 5; starPath(ctx, x + Math.cos(a) * w.w * .62, w.y + w.h * .5 + Math.sin(a) * w.h * .62, 9, t); ctx.fill(); } // stelline intorno
+}
+function drawChoose(t) {
+  ctx.fillStyle = 'rgba(255,248,240,.55)'; ctx.fillRect(0, 0, W, H);
+  bigText('Chi vuoi accudire?', H * .16, clamp(W * .06, 24, 56));
+  unlockedPets().forEach((k, i) => {
+    const p = choosePos(i);
+    ctx.fillStyle = 'rgba(255,255,255,.75)'; ell(ctx, p.x, p.y + p.s * 1.05, p.s * 1.15, p.s * .26); ctx.fill();
+    drawPet(ctx, k, p.x, p.y, p.s, MOODS.felice, t + i * .7, null, { blink: ((t + i * .7) % 3.6) < .12, jump: (Math.sin(t * 1.4 + i * 2) > .97) ? .5 : 0 });
+    ctx.font = `bold ${Math.round(Math.min(p.s * .36, p.gap / 8))}px "Comic Sans MS","Chalkboard SE",system-ui,sans-serif`; ctx.fillStyle = '#6a7bd1'; ctx.textAlign = 'center';
+    ctx.fillText(PETS[k].name + ' ' + PETS[k].emoji, p.x, p.y + p.s * 1.6);
+  });
+}
+
+// =========================================================
+//  GIOCO (passo 1): cucciolo vivo + primo ciclo di empatia (triste / coccole → carezza)
+// =========================================================
+function lerpPose(a, b, k) {
+  a.hands.forEach((h, i) => { h[0] = lerp(h[0], b.hands[i][0], k); h[1] = lerp(h[1], b.hands[i][1], k); });
+  a.ears = lerp(a.ears, b.ears, k); a.tail = lerp(a.tail, b.tail, k); a.tilt = lerp(a.tilt, b.tilt, k); a.squash = lerp(a.squash, b.squash, k);
+}
+function burst(x, y, n, cols, kind) { for (let i = 0; i < n; i++) { const a = rand(0, TAU), v = rand(80, 220); parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 120, life: 1, c: pick(cols), kind, r: rand(5, 11) }); } }
+let happyCount = 0;
+function setMood(m) {
+  pet.mood = m;
+  if (m === 'sonno') sfx.yawn(); else if (m === 'fame') sfx.rumble(); else if (m === 'freddo') sfx.shiver(); else if (m === 'triste') sfx.sniff();
+  else if (m !== 'felice' && m !== 'dorme') VOICES[pet.kind]();
+}
+// il cucciolo è stato aiutato: torna felice, festa piccola, "Bravo Lolo!"
+function helped() {
+  pet.mood = 'felice'; pet.jump = 1; pet.needT = R.free ? rand(10, 16) : rand(2.5, 4); pet.pauseT = 1.2; happyCount++; // nella routine: una breve passeggiata e poi il passo dopo
+  care.need = null; care.stage = null; care.strikes = 0; care.glow = false; buildBar();
+  sfx.sparkle(); sfx.giggle(); burst(pet.x, L.petY - L.s * .9, 16, ['#ff8fa3', '#ffd166', '#ffadc8'], 'heart');
+  speak(happyCount % 3 === 0 ? 'Bravissimo Lolo!' : 'Bravo Lolo!');
+}
+function choosePet(k) {
+  pet.kind = k; save.kind = k; saveNow();
+  scene = 'room'; pet.mood = 'felice'; pet.pose = poseOf(MOODS.felice); pet.arrive = 1; pet.jump = 1; pet.needT = 8;
+  pet.x = pet.tx = L.petX; pet.pauseT = 1.5; pet.action = null;
+  VOICES[k](); sfx.sparkle(); burst(L.petX, L.petY - L.s * .4, 18, RAINBOW, 'star');
+  startDay(); // si comincia la giornata: dorme nel lettino
+}
+function update(dt) {
+  pet.jump = Math.max(0, pet.jump - dt * 2.2); pet.arrive = Math.max(0, pet.arrive - dt * 2);
+  pet.pet = Math.max(0, pet.pet - dt * .6);
+  pet.nextBlink -= dt; if (pet.nextBlink <= 0) { pet.blink = .13; pet.nextBlink = rand(2, 5); }
+  pet.blink = Math.max(0, pet.blink - dt);
+  pet.look[0] *= Math.pow(.3, dt); pet.look[1] *= Math.pow(.3, dt);
+  const af0 = actionFace(); // durante un'azione (respiro, pappa…) il corpo prende la posa dell'azione, non quella del broncio
+  const holding = pet.solo && pet.solo.phase === 'play' && (pet.solo.k === 'libro' || pet.solo.k === 'paperella'); // tiene il gioco con le mani davanti
+  lerpPose(pet.pose, poseOf(MOODS[af0 ? af0.mood : holding ? 'maniSporche' : pet.mood]), Math.min(1, dt * 4)); // il corpo cambia posa piano piano
+  worldFade = Math.max(0, worldFade - dt * 2);
+  updateTrip(dt);
+  if (R.friend && scene === 'room' && R.room === 'camera' && R.curtains >= 1 && !R.trip) { // il nuovo amico saluta dalla finestra
+    const f = R.friend, t0 = f.t; f.t += dt;
+    if (t0 < .3 && f.t >= .3) { VOICES[f.k](); sfx.sparkle(); speak('Wow!'); const w = L.win; burst(w.x + w.w / 2, w.y + w.h * .6, 20, RAINBOW, 'star'); }
+    if (t0 < 2.5 && f.t >= 2.5) VOICES[f.k]();
+    if (f.t > 6.5) R.friend = null;
+  }
+  if (scene === 'room' && pet.kind && !R.trip) {
+    const k = SPD().k, needy = !!care.stage || !!pet.action;
+    // azione in corso (mangia, doccia…): suoni a tempo, poi si risolve
+    if (pet.action) {
+      const a = pet.action, u0 = a.t / a.dur; a.t += dt; const u1 = a.t / a.dur, at = v => u0 < v && u1 >= v;
+      if (a.act === 'eat' && (at(.15) || at(.45) || at(.75))) sfx.gnam();
+      if (a.act === 'drink' && at(.2)) sfx.glug();
+      if (a.act === 'wash' && (at(.05) || at(.5))) sfx.splash();
+      if (a.act === 'potty' && at(.3)) sfx.pss();
+      if (a.act === 'sleep' && at(.1)) sfx.yawn();
+      if (a.act === 'play' && (at(.12) || at(.37) || at(.62) || at(.87))) sfx.bounce();
+      if (a.act === 'breathe' && (at(.02) || at(.5))) sfx.breathIn();
+      if (a.act === 'breathe' && (at(.25) || at(.75))) { sfx.phew(); for (let i = 0; i < 10; i++) parts.push({ x: pet.x + L.s * 1.35, y: L.petY - L.s * .2, vx: rand(40, 200), vy: rand(-140, -20), life: 1.4, c: '#ffffff', kind: 'petal', r: rand(4, 7) }); } // petali che volano via
+      if (a.act === 'breathe') pet.breath = breathAmt(a); else pet.breath = 0;
+      if (a.act === 'sponge' && (at(.1) || at(.55))) sfx.splash();
+      if (a.act === 'hug' && at(.1)) { sfx.purr(); sfx.sparkle(); }
+      if (a.act === 'plush' && at(.15)) sfx.giggle();
+      if (a.act === 'blanket' && at(.1)) sfx.whoosh();
+      if (a.act === 'brush' && (at(.2) || at(.6))) sfx.sniff();
+      if (a.act === 'read' && at(.2)) sfx.sparkle();
+      if (a.act === 'medicine' && at(.25)) sfx.spoon();
+      if (a.act === 'handwash' && (at(.1) || at(.55))) { sfx.sniff(); if (at(.55)) sfx.splash(); }
+      if (a.act === 'change' && at(.2)) sfx.whoosh();
+      if (a.act === 'play' && Math.sin(u1 * Math.PI * 4) > .9) pet.jump = Math.max(pet.jump, .5);
+      if (a.t >= a.dur) finishAction();
+    }
+    if (R.nap) { // siesta: dorme qualche secondo, poi si sveglia da solo, si stiracchia e il pomeriggio continua
+      R.nap.t += dt * k; pet.mood = 'dorme';
+      if (R.nap.t > 4.5) { R.nap = null; pet.inBed = false; pet.x = bedPetX(); pet.tx = L.petX; sfx.yawn(); pet.jump = 1; resolveStep(); }
+    }
+    if (R.night) { // la notte: dorme sotto le stelle, poi si fa buio e comincia un giorno nuovo
+      R.night.t += dt * k; pet.mood = 'dorme';
+      if (R.night.t >= 7.5) { R.night = null; worldFade = 1; startDay(); }
+    }
+    if (pet.inBed) { pet.x = pet.tx = bedPetX(); }   // dorme nel lettino (mattina finché non apri le tende, o la siesta)
+    else if (needy) pet.tx = L.petX;                  // quando gli serve qualcosa torna al centro, sul tappeto
+    else if (!down && Math.abs(pet.x - pet.tx) < 3) { // fermo: si guarda intorno, poi riparte verso un altro punto
+      pet.pauseT -= dt * k;
+      pet.idleT += dt; if (pet.idleT > rand(5, 8)) { pet.idleT = 0; pet.jump = .8; VOICES[pet.kind](); } // ogni tanto saltella e fa il verso
+      if (pet.pauseT <= 0 && !pet.solo && R.room === 'camera' && (pet.soloCool || 0) <= 0 && Math.random() < (R.free ? .45 : .3)) { startSolo(); }
+      else if (pet.pauseT <= 0 && !pet.solo) {
+        let nx = pet.x; for (let i = 0; i < 6 && Math.abs(nx - pet.x) < W * .18; i++) nx = rand(L.walkMin, L.walkMax);
+        pet.tx = nx; pet.pauseT = rand(2, 4.5);
+        if (Math.random() < .35) pet.look = [rand(-1, 1), -.6]; // guarda la finestra o la cesta
+      }
+    }
+    const dx = pet.tx - pet.x, speed = L.s * (needy ? 2.2 : 1.1) * k;
+    const moving = !down && !pet.inBed && Math.abs(dx) > 2;
+    if (moving) { pet.x += Math.sign(dx) * Math.min(Math.abs(dx), speed * dt); pet.look = [Math.sign(dx) * .8, 0]; }
+    pet.walk = lerp(pet.walk, moving ? 1 : 0, Math.min(1, dt * 6));
+    pet.atCenter = pet.inBed || Math.abs(pet.x - L.petX) < 4;
+    pet.soloCool = Math.max(0, (pet.soloCool || 0) - dt);
+    if (needy && pet.solo) pet.solo = null; // se gli serve qualcosa, lascia il gioco
+    updateSolo(dt);
+    if (!needy && !care.stage && !pet.action && !pet.solo && !R.night && !R.trip) { pet.needT -= dt * k; if (pet.needT <= 0) nextStep(); } // il prossimo passo della routine (aspetta che finisca di giocare da solo)
+    pet.shake = Math.max(0, (pet.shake || 0) - dt * 2);
+    pet.hintT = acceptsPetting() && !down ? (pet.hintT || 0) + dt : 0;
+    updateWait(dt);
+    updateFly(dt);
+  }
+  for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.kind === 'heart' ? -20 : 300) * dt; p.life -= dt * (p.kind === 'heart' ? .8 : 1.2); }
+  parts = parts.filter(p => p.life > 0);
+  for (const x of texts) x.life -= dt;
+  texts = texts.filter(x => x.life > 0);
+}
+function draw() {
+  const t = performance.now() / 1000;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawRoom(t);
+  // la luce del momento scurisce solo la stanza: il cucciolo e gli oggetti restano sempre ben visibili
+  const T = TIMES[timeKey]; if (T.dark && scene === 'room') { ctx.fillStyle = `rgba(30,30,80,${T.dark})`; ctx.fillRect(0, 0, W, H); }
+  if (scene === 'room' && R.room === 'camera' && !R.trip) { const dk = Math.max((1 - curtainsOpen()) * .3, R.nap ? .22 : 0); if (dk > .01) { ctx.fillStyle = `rgba(30,30,80,${dk})`; ctx.fillRect(0, 0, W, H); } } // tende chiuse o siesta: stanza in penombra
+  if (R.friend && scene === 'room' && R.room === 'camera' && R.curtains >= 1 && !R.trip) drawFriend(t);
+  if (scene === 'choose' || !pet.kind) drawChoose(t);
+  else if (R.trip) drawTrip(t);
+  else {
+    const s = L.s * (1 - pet.arrive * .6) * (pet.inBed ? .8 : 1) * (1 + (pet.breath || 0) * .08), af = actionFace(), m = MOODS[af ? af.mood : pet.mood]; // col respiro si gonfia d'aria
+    const swing = pet.action && pet.action.act === 'play' && R.room === 'parco' && ME().park === 'tire' ? Math.sin(t * 3) * s * .35 : 0; // la scimmietta si dondola sulla ruota
+    const px = pet.x + swing + Math.sin(t * 30) * s * .07 * (pet.shake || 0); // no-no: scuote la testa
+    const py = pet.inBed ? L.bed.y - s * .25 : L.petY;
+    const wear = { outfit: pet.outfit ? { type: pet.outfit, col: OUTFIT_COL[pet.outfit] } : null, bag: pet.bag };
+    if (!pet.inBed) drawActionBack(px, py, s);
+    const r = drawPet(ctx, pet.kind, px, py, s, m, t, pet.pose, Object.assign({ blink: pet.blink > 0 && !(af && af.closed), look: pet.solo && pet.solo.phase === 'play' ? [.3, .75] : Math.hypot(pet.look[0], pet.look[1]) > .05 ? pet.look : null, jump: pet.inBed ? 0 : pet.jump, pet: pet.pet > .3 || (af && af.happy), walk: pet.walk }, wear));
+    if (pet.inBed) drawBlanket(L.bed); // copertina sopra il cucciolo che dorme
+    else { drawActionFront(px, py, s, t); drawSolo(px, py, s, t); drawKeepsake(px, py, s, t); }
+    if (care.stage && !pet.action && !R.nap && pet.atCenter) drawThought(ctx, r.x, r.top, s, needIcon(), t); // la nuvoletta quando è arrivato da Lolo
+    if (pet.hintT > 4.5 && !pet.action) { const p = (t % 1.6) / 1.6; ctx.globalAlpha = p < .85 ? 1 : (1 - p) / .15; emo('👆', pet.x - s * .6 + p * s * 1.2, L.petY - s * .2 + Math.sin(p * Math.PI) * s * .1, s * .5); ctx.globalAlpha = 1; } // ditino: accarezzalo (dopo 4,5 s: il tempo per parlarne insieme)
+  }
+  if (scene === 'room' && pet.kind && pet.action && pet.action.act === 'sleep') { ctx.fillStyle = `rgba(30,30,80,${.3 * Math.sin(Math.min(1, pet.action.t / pet.action.dur) * Math.PI)})`; ctx.fillRect(0, 0, W, H); }
+  if (scene === 'room' && R.night) { const nt = R.night.t, dk = Math.min(.25, nt * .1) + (nt > 5.5 ? Math.min(1, (nt - 5.5) / 2) * .75 : 0); ctx.fillStyle = `rgba(20,20,60,${dk})`; ctx.fillRect(0, 0, W, H); // la notte si fa più buia, poi il giorno nuovo
+    if (nt > .5 && nt < 6) { ctx.globalAlpha = Math.min(1, (nt - .5) * 2, (6 - nt)); for (let i = 0; i < 3; i++) { const p = (t * .5 + i / 3) % 1; ctx.fillStyle = '#ffffff'; ctx.font = `bold ${L.s * (.25 + p * .2)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('z', bedPetX() + L.s * (.4 + p * .5), L.bed.y - L.s * (.6 + p * .8)); } ctx.globalAlpha = 1; } } // zzz
+  if (worldFade > 0) { ctx.fillStyle = `rgba(255,255,255,${worldFade})`; ctx.fillRect(0, 0, W, H); } // dissolvenza al cambio stanza
+  if (scene === 'room' && pet.kind && !R.trip && !R.night) drawBar(t); // la barra sopra la penombra: sempre ben visibile
+  for (const p of parts) {
+    ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.c;
+    if (p.kind === 'ice') { emo('🧊', p.x, p.y, p.r * 2.4, p.life * 6); continue; } // borsa del ghiaccio che vola via
+    if (p.kind === 'petal') { ell(ctx, p.x, p.y, p.r, p.r * .35, p.life * 5); ctx.fill(); continue; } // petali del soffione
+    if (p.kind === 'heart') heartPath(ctx, p.x, p.y, p.r); else starPath(ctx, p.x, p.y, p.r, p.life * 4); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  for (const x of texts) { ctx.globalAlpha = clamp(x.life, 0, 1); bigText(x.t, H * .3, clamp(W * .06, 26, 54)); }
+  ctx.globalAlpha = 1;
+}
+
+// =========================================================
+//  OGGETTI DELLA BARRA e BISOGNI
+//  L'icona nella nuvoletta è la stessa del bottone giusto: Lolo impara ad abbinarle.
+// =========================================================
+Object.assign(sfx, {
+  no() { tone(330, 300, .12, 'triangle', .1); tone(300, 260, .14, 'triangle', .1, .16); },            // "no-no" gentile
+  oops() { tone(600, 300, .35, 'sine', .14); noise(.3, 1200, 400, .06, 'lowpass', .1); },
+  cough() { for (let i = 0; i < 2; i++) noise(.12, 900, 500, .1, 'bandpass', i * .25); },
+  spoon() { tone(900, 1200, .12, 'sine', .1); tone(500, 400, .2, 'triangle', .1, .2); },
+  grumble() { for (let i = 0; i < 4; i++) tone(160 + i * 10, 140, .1, 'sawtooth', .06, i * .1); },
+  gnam() { tone(300, 220, .12, 'triangle', .16); tone(340, 240, .14, 'triangle', .16, .2); },
+  glug() { for (let i = 0; i < 4; i++) tone(300 + i * 60, 600 + i * 60, .1, 'sine', .12, i * .18); },
+  splash() { noise(.5, 2500, 700, .12, 'bandpass'); },
+  pss() { noise(.9, 3000, 2500, .05, 'highpass'); },
+  bounce() { tone(200, 420, .15, 'sine', .14); },
+  breathIn() { noise(2.6, 400, 900, .04, 'bandpass'); },
+  phew() { noise(2.4, 900, 300, .05, 'lowpass'); tone(420, 300, 1.2, 'sine', .04); }, // "phew…" rilassante
+});
+const ITEMS = {
+  pappa:      { icon: '🍎', act: 'eat',     dur: 2.2 },
+  acqua:      { icon: '🥤', act: 'drink',   dur: 1.8 },
+  doccia:     { icon: '🛁', act: 'wash',    dur: 2.6 },
+  vasino:     { icon: '🚽', act: 'potty',   dur: 2.4 },
+  nanna:      { icon: '🛏️', act: 'sleep',   dur: 3.2 },
+  palla:      { icon: '⚽', act: 'play',    dur: 2.4 },
+  copertina:  { icon: '🧣', act: 'blanket', dur: 2.0 },
+  soffione:   { icon: 'soffione', act: 'breathe', dur: 12 },  // respiro guidato: 2 respiri (3 s dentro, 3 s fuori); icona disegnata
+  peluche:    { icon: '🧸', act: 'plush',   dur: 2.4 },      // il giocattolo del cuore
+  cuore:      { icon: '❤️', act: 'hug',     dur: 1.8 },      // consolare (come la carezza col dito)
+  spugna:     { icon: '🧽', act: 'sponge',  dur: 1.8 },      // pulire la pozzetta della pipì
+  spazzolino: { icon: '🪥', act: 'brush',   dur: 2.2 },
+  libro:      { icon: '📖', act: 'read',    dur: 2.4 },
+  medicina:   { icon: '💊', act: 'medicine', dur: 2.0 },
+  // oggetti della routine (servono solo nel loro momento: non compaiono nella barra "libera")
+  tende:      { icon: '☀️', act: 'wake',    dur: 1.6, routine: true },
+  sapone:     { icon: '🧼', act: 'handwash', dur: 2.2, routine: true },
+  pigiama:    { icon: '👚', act: 'pajama',  dur: 1.6, routine: true },
+  latte:      { icon: '🥛', act: 'drink',   dur: 2.0, routine: true },
+  tuta:       { icon: '🩳', act: 'change',  dur: 1.6, routine: true },
+  vestiti:    { icon: '👕', act: 'dress',   dur: 1.6, routine: true },
+  zainetto:   { icon: '🎒', act: 'bag',     dur: 1.4, routine: true },
+  bus:        { icon: '🚌', act: 'bus',     dur: .4, routine: true },
+};
+const ITEM_KEYS = Object.keys(ITEMS);
+const NEEDS = { // bisogno → oggetti giusti (coccole: solo la carezza col dito)
+  fame: ['pappa'], sete: ['acqua'], sporco: ['doccia'], pipi: ['vasino'], cacca: ['vasino'], sonno: ['nanna'],
+  gioco: ['palla'], freddo: ['copertina'], coccole: ['cuore'], triste: ['cuore', 'peluche'], // coccole e tristezza: anche la carezza col dito
+  // passi della routine
+  sveglia: ['tende'], colazione: ['pappa'], vestirsi: ['vestiti'], zainetto: ['zainetto'], bus: ['bus'],
+  mani: ['sapone'], cambiarsi: ['tuta'], pranzo: ['pappa'], siesta: ['nanna'], merenda: ['pappa'], parco: ['palla'],
+  cena: ['pappa'], bagnetto: ['doccia'], pigiama: ['pigiama'], latte: ['latte'], denti: ['spazzolino'], libro: ['libro'], nanna: ['nanna'],
+};
+// pasti variati: ogni pasto pesca un piatto dal suo menu (la nuvoletta e il bottone mostrano lo stesso piatto)
+const MENUS = { colazione: ['🍓', '🍌', '🥣', '🍐'], pranzo: ['🍝', '🍗', '🍚', '🥗'], merenda: ['🍎', '🍌', '🧀', '🍇'], cena: ['🍝', '🍗', '🐟', '🥦'] };
+function mealOf(n) { // quale menu per questo bisogno (la fame "libera" segue il momento della giornata)
+  if (n === 'colazione' || n === 'pranzo' || n === 'merenda' || n === 'cena') return n;
+  if (n === 'fame') return timeKey === 'mattina' ? 'colazione' : timeKey === 'pomeriggio' ? 'merenda' : 'cena';
+  return null;
+}
+const iconOf = k => k === 'pappa' ? (care.dish || MENUS[mealOf('fame')][0]) : ITEMS[k].icon;
+const NEED_KEYS = ['fame', 'sete', 'sporco', 'pipi', 'cacca', 'sonno', 'gioco', 'freddo', 'coccole', 'triste']; // bisogni "liberi"
+const NEED_MOOD = { sveglia: 'dorme', colazione: 'fame', vestirsi: 'felice', zainetto: 'felice', bus: 'gioco', // che faccia fa in quel passo
+  mani: 'maniSporche', cambiarsi: 'felice', pranzo: 'fame', siesta: 'sonno', merenda: 'fame', parco: 'gioco',
+  cena: 'fame', bagnetto: 'sporco', pigiama: 'freddo', latte: 'sete', denti: 'felice', libro: 'coccole', nanna: 'sonno' };
+const needMood = n => NEED_MOOD[n] || n;
+const CALM = ['soffione', 'peluche', 'cuore']; // per calmarlo (oltre alla carezza): respiro guidato, peluche, abbraccio
+const EMO_STAGES = ['incident', 'calm', 'pancia', 'malato1', 'malato2', 'tantrum'];
+// 🐢: negli stati emotivi solo 2 bottoni (meno confusione): l'oggetto giusto + uno di sostegno
+function bar2() {
+  const st = care.stage, rage = pet.mood === 'arrabbiato';
+  if (st === 'tantrum') return ['soffione', 'cuore'];
+  if (st === 'incident') return [care.need === 'cacca' ? 'doccia' : 'spugna', 'cuore'];
+  if (st === 'calm') return rage ? ['soffione', 'peluche'] : ['cuore', 'peluche'];
+  if (st === 'pancia' || st === 'malato1') return ['medicina', 'copertina'];
+  if (st === 'malato2') return ['nanna', 'medicina'];
+  return null;
+}
+const NEED_ICON = { fame: '🍎', sete: '🥤', sporco: '🛁', pipi: '🚽', cacca: '🚽', sonno: '🛏️', gioco: '⚽', freddo: '🧣', coccole: '🤗', triste: '🤗',
+  sveglia: '☀️', vestirsi: '👕', zainetto: '🎒', bus: '🚌', mani: '🧼', cambiarsi: '🩳', siesta: '🛏️', parco: '⚽', // i pasti: il piatto del giorno (care.dish)
+  bagnetto: '🛁', pigiama: '👚', latte: '🥛', denti: '🪥', libro: '📖', nanna: '🛏️' };
+// care.stage: 'need' (chiede qualcosa) → con 3 sbagli: 'incident' (pipì/cacca addosso: va lavato) o 'calm' (arrabbiato / si vergogna: va calmato)
+const care = { need: null, stage: null, strikes: 0, glow: false, bar: [], lastNeed: null };
+const barSize = () => speedKey === 'lento' ? 4 : (W > 760 ? 7 : 6);
+// stage: 'need' · 'incident' (lavare) · 'calm' (calmare) · 'pancia' (medicina) · 'malato1' (medicina) → 'malato2' (letto)
+function rightItems() {
+  const st = care.stage;
+  if (st === 'need') return NEEDS[care.need]; if (st === 'incident') return [care.need === 'cacca' ? 'doccia' : 'spugna']; if (st === 'calm' || st === 'tantrum') return CALM; // pipì: spugna sulla pozzetta · cacca: doccia
+  if (st === 'pancia' || st === 'malato1') return ['medicina']; if (st === 'malato2') return ['nanna']; return [];
+}
+const acceptsPetting = () => care.stage === 'calm' || care.stage === 'tantrum' || (care.stage === 'need' && (care.need === 'coccole' || care.need === 'triste'));
+function buildBar() { // l'oggetto giusto + altri a caso, in ordine mescolato (resta uguale finché non cambia la richiesta)
+  if (speedKey === 'lento' && EMO_STAGES.includes(care.stage)) { care.bar = bar2(); return; }
+  const n = barSize(), right = rightItems().slice(0, n);
+  const others = ITEM_KEYS.filter(k => !right.includes(k) && (care.stage || !ITEMS[k].routine)).sort(() => Math.random() - .5);
+  const base = care.stage ? right : ['palla', 'peluche'];
+  care.bar = [...base, ...others.filter(k => !base.includes(k))].slice(0, n).sort(() => Math.random() - .5);
+}
+function needIcon() {
+  const st = care.stage;
+  if (st === 'incident') return care.need === 'cacca' ? '🛁' : '💧❓';
+  if (st === 'tantrum') return '⛈️'; // un brutto pensiero: arrabbiato senza un motivo che si vede
+  if (st === 'calm') return pet.mood === 'arrabbiato' ? '🌀' : '❤️'; // spirale = arrabbiato/confuso · cuore = ha bisogno di conforto
+  if (st === 'pancia' || st === 'malato1') return '💊'; if (st === 'malato2') return '🛏️';
+  if (care.need && care.dish) return care.dish; // pasto: lo stesso piatto del bottone
+  return care.need ? NEED_ICON[care.need] : null;
+}
+// pipì e cacca: 3 + 1 al giorno, in punti a caso, mai due di fila. Acqua data senza sete = +1 pipì (max +2),
+// pappa data senza fame = +1 cacca (max +1); 3 pappe di troppo = mal di pancia.
+const day = { potty: { pipi: 3, cacca: 1 }, extraPipi: 0, extraCacca: 0, extraFood: 0, crises: 0 };
+function newDay() { day.potty = { pipi: 3, cacca: 1 }; day.extraPipi = day.extraCacca = day.extraFood = 0; day.crises = 0; }
+function newPart() { day.crises = 0; } // le "crisi" si contano per parte della giornata (mattina / pomeriggio / sera)
+function setNeed(n) {
+  const meal = mealOf(n); care.dish = meal ? pick(MENUS[meal]) : null; // il piatto di questo pasto
+  care.lastNeed = n; care.need = n; care.stage = 'need'; care.strikes = 0; care.glow = false; care.waitT = 0; care.waitSad = false; setMood(needMood(n)); buildBar(); }
+// aspettare troppo: per pipì e cacca è uno sbaglio vero (non l'abbiamo portato in tempo) → incidente; per il resto diventa solo triste
+const POTTY_WAIT = () => speedKey === 'lento' ? 30 : 18, SAD_WAIT = 30;
+function updateWait(dt) {
+  if (care.stage !== 'need' || pet.action || !pet.atCenter || dragItem || flyItem) return;
+  care.waitT = (care.waitT || 0) + dt;
+  if (speedKey === 'lento' && care.waitT > 6) care.glow = true; // 🐢: dopo un po' l'oggetto giusto brilla
+  const potty = care.need === 'pipi' || care.need === 'cacca';
+  if (potty) {
+    const lim = POTTY_WAIT(), q = care.waitT / lim;
+    if ((q > .34 && !care.cue1) || (q > .67 && !care.cue2)) { care[q > .67 ? 'cue2' : 'cue1'] = true; pet.jump = 1; VOICES[pet.kind](); } // lo chiede più forte
+    if (care.waitT >= lim) { care.cue1 = care.cue2 = false; care.strikes = 0; day.crises++; care.stage = 'incident'; pet.mood = care.need === 'pipi' ? 'bagnato' : 'sporcato'; sfx.oops(); buildBar(); }
+  } else if (care.waitT > SAD_WAIT && !care.waitSad) { care.waitSad = true; pet.mood = 'triste'; sfx.sniff(); }
+}
+function newNeed() {
+  const potty = care.lastNeed !== 'pipi' && care.lastNeed !== 'cacca', r = Math.random();
+  if (potty && day.potty.pipi > 0 && r < .22) { day.potty.pipi--; return setNeed('pipi'); }
+  if (potty && day.potty.cacca > 0 && r < .3) { day.potty.cacca--; return setNeed('cacca'); }
+  setNeed(pick(NEED_KEYS.filter(k => k !== 'pipi' && k !== 'cacca' && k !== care.lastNeed)));
+}
+// a volte i bimbi si arrabbiano senza un motivo che si vede (un pensiero, una cosa vista o sentita): si calma e si rassicura.
+// Non conta come "crisi" e gli oggetti sbagliati fanno solo il no-no.
+function startTantrum() {
+  care.need = null; care.stage = 'tantrum'; care.strikes = 0; care.glow = false; care.dish = null;
+  pet.mood = 'capriccio'; sfx.grumble(); pet.jump = .6; buildBar();
+}
+function startPancia() { care.need = 'pancia'; care.stage = 'pancia'; care.strikes = 0; care.glow = false; pet.mood = 'pancia'; sfx.oops(); buildBar(); }
+function afterAction(act, resolved) { // causa → effetto quando gli si dà qualcosa che non aveva chiesto
+  if (resolved) return;
+  if (act === 'drink' && day.extraPipi < 2) { day.extraPipi++; day.potty.pipi++; }
+  if (act === 'eat') {
+    if (day.extraCacca < 1) { day.extraCacca++; day.potty.cacca++; }
+    if (++day.extraFood >= 3) { day.extraFood = 0; startPancia(); } // troppa pappa: mal di pancia
+  }
+}
+// oggetto sbagliato: no-no (1) → triste (2) → incidente o rabbia (3). Mai "hai perso".
+function wrongItem() {
+  pet.shake = 1; sfx.no(); care.strikes++; care.glow = true;
+  if (care.stage === 'pancia' && care.strikes >= 2) { // sbaglia ancora con il mal di pancia: si ammala (medicina e letto)
+    care.stage = 'malato1'; care.strikes = 0; pet.mood = 'malato'; sfx.cough(); buildBar(); return;
+  }
+  if (care.stage !== 'need') return; // da lavare / da calmare / da curare: solo il no-no
+  if (care.strikes === 2) { pet.mood = 'triste'; sfx.sniff(); }
+  if (care.strikes >= 3) {
+    care.strikes = 0;
+    if (day.crises >= 2) { day.crises = 0; return startPancia(); } // terza crisi nella stessa parte della giornata: si sente male
+    day.crises++;
+    if (care.need === 'pipi' || care.need === 'cacca') { care.stage = 'incident'; pet.mood = care.need === 'pipi' ? 'bagnato' : 'sporcato'; sfx.oops(); }
+    else { care.stage = 'calm'; pet.mood = 'arrabbiato'; sfx.grumble(); }
+    buildBar();
+  }
+}
+// un passo risolto (oggetto giusto o carezza)
+function resolveStep() {
+  if (care.stage === 'tantrum') { // calmato: un abbraccio e "va tutto bene", poi la routine riprende dallo stesso passo
+    burst(pet.x, L.petY - L.s * .9, 18, ['#ff8fa3', '#ffadc8', '#ffd166'], 'heart'); texts.push({ t: 'Va tutto bene ❤️', life: 3 });
+    return helped();
+  }
+  if (care.stage === 'malato2') { sfx.pop(); parts.push({ x: pet.x, y: L.petY - L.s * 1.2, vx: rand(-60, 60), vy: -420, life: 1.3, c: '#9fd8ff', kind: 'ice', r: 16 }); } // guarito: la borsa del ghiaccio vola via
+  if (care.stage === 'need' || care.stage === 'pancia' || care.stage === 'malato2') return helped(); // malato2: si sveglia guarito
+  if (care.stage === 'malato1') { care.stage = 'malato2'; care.strikes = 0; care.glow = false; sfx.sparkle(); buildBar(); return; } // medicina presa: ora a letto
+  if (care.stage === 'incident') { // pulito! ora va consolato
+    care.stage = 'calm'; care.strikes = 0; care.glow = false; pet.mood = 'vergogna'; sfx.sparkle(); buildBar(); return;
+  }
+  if (care.stage === 'calm') {
+    if (care.need === 'pipi' || care.need === 'cacca') { texts.push({ t: 'Capita a tutti! ❤️', life: 3 }); return helped(); } // dopo l'incidente il bisogno è passato
+    care.stage = 'need'; care.strikes = 0; pet.mood = needMood(care.need); sfx.giggle(); buildBar(); // calmo: ora si può tornare a quello che chiedeva
+  }
+}
+function useItem(key) {
+  if (pet.action || !pet.kind || R.trip || R.nap || R.night) return; // durante la siesta e la notte lasciamolo dormire
+  const it = ITEMS[key], ok = rightItems().includes(key);
+  if (care.stage === 'incident' && key === 'cuore') { // un abbraccio fa bene, ma prima puliamo (nessun errore)
+    burst(pet.x, L.petY - L.s * .6, 8, ['#ff8fa3', '#ffadc8'], 'heart'); pet.jump = .4; care.glow = true; return;
+  }
+  if (care.stage && !ok) return wrongItem();
+  if (!care.stage && it.routine) { pet.jump = .8; sfx.giggle(); return; } // fuori dal suo momento: solo un saltello
+  pet.solo = null; // se Lolo gli dà qualcosa, lascia il gioco e torna da lui
+  const inStep = care.stage === 'need';
+  const dur = key === 'nanna' && inStep && (care.need === 'siesta' || care.need === 'nanna') ? .3 : key === 'libro' && inStep && care.need === 'libro' ? 4 : it.dur; // nanna: va subito nel lettino · la storia della sera dura un po' di più
+  pet.action = { key, act: it.act, t: 0, dur, resolve: !!care.stage, icon: iconOf(key) }; // icon: il piatto che sta mangiando
+  sfx.pop();
+}
+function finishAction() {
+  const a = pet.action; pet.action = null; pet.breath = 0; afterAction(a.act, a.resolve);
+  if (a.resolve && routineEffect(a.act)) return; // il bus porta a scuola: la routine continua da lì
+  if (a.resolve) resolveStep(); else { pet.jump = .8; sfx.giggle(); } // quando sta bene: solo un gioco
+}
+
+// =========================================================
+//  ROUTINE DELLA GIORNATA (passo 3: la mattina) — la giornata avanza facendo i passi
+// =========================================================
+const ROUTINE = {
+  mattina: { time: 'mattina', steps: [
+    { need: 'sveglia', room: 'camera' }, { need: 'colazione', room: 'cucina' }, { need: 'vestirsi', room: 'camera' },
+    { need: 'zainetto', room: 'camera' }, { need: 'bus', room: 'fuori' } ] },
+  pomeriggio: { time: 'pomeriggio', steps: [ // di ritorno da scuola
+    { need: 'mani', room: 'bagno' }, { need: 'cambiarsi', room: 'camera' }, { need: 'pranzo', room: 'cucina' },
+    { need: 'siesta', room: 'camera' }, { need: 'merenda', room: 'cucina' }, { need: 'parco', room: 'parco' } ] },
+  sera: { time: 'sera', steps: [ // e poi la nanna: la notte porta al giorno dopo
+    { need: 'cena', room: 'cucina' }, { need: 'bagnetto', room: 'bagno' }, { need: 'pigiama', room: 'camera' },
+    { need: 'latte', room: 'camera', time: 'notte' }, { need: 'denti', room: 'bagno', time: 'notte' },
+    { need: 'libro', room: 'camera', time: 'notte' }, { need: 'nanna', room: 'camera', time: 'notte' } ] },
+};
+const PART_ORDER = ['mattina', 'pomeriggio', 'sera'];
+const DAY_PARTS = ['mattina', 'pomeriggio', 'sera']; // le 3 parti della giornata (per dividere pipì e cacca)
+const R = { part: 'mattina', i: -1, room: 'camera', curtains: 1, trip: null, free: false }; // free = dopo la scuola (fino al passo 4): bisogni liberi
+function stepsLeftToday() { let n = 0, found = false; for (const p of PART_ORDER) { const st = ROUTINE[p].steps; if (p === R.part) { n += st.length - R.i - 1; found = true; } else if (found) n += st.length; } return Math.max(1, n); }
+function goRoom(room) { if (R.room === room) return; R.room = room; worldFade = 1; pet.x = pet.tx = L.petX; makeRoomDeco(); }
+function startDay() { // nuova giornata: si comincia nel lettino, in pigiama, con le tende chiuse
+  newDay(); R.part = PART_ORDER[0]; R.i = -1; R.free = false; R.trip = null; R.partPipi = 0;
+  day.caccaPart = pick(DAY_PARTS); // la cacca arriva in una parte della giornata a caso
+  // arrabbiato senza motivo: 1 volta ogni 2 giornate (conto dei giorni salvato), in un passo a caso della routine
+  save.days = (save.days || 0) + 1;
+  if (!save.tantrumNext) save.tantrumNext = save.days + (Math.random() < .5 ? 0 : 1);
+  day.tantrum = save.days >= save.tantrumNext; if (day.tantrum) save.tantrumNext = save.days + 2;
+  // un amico nuovo? al risveglio si affaccia alla finestra (la prima volta gli amici già sbloccati arrivano senza festa)
+  const now = unlockedPets(); if (!save.seen) save.seen = now.slice();
+  const fresh = now.filter(k => !save.seen.includes(k)); R.friend = fresh.length ? { k: fresh[0], t: 0 } : null; save.seen = now.slice();
+  const total = PART_ORDER.reduce((n, p) => n + ROUTINE[p].steps.length, 0);
+  day.stepN = 0; day.tantrumStep = 2 + Math.floor(Math.random() * Math.max(1, total - 3)); day.tantrumDone = false;
+  saveNow();
+  timeKey = ROUTINE[R.part].time; R.room = 'camera'; R.curtains = 0;
+  pet.outfit = 'pigiama'; pet.bag = false; pet.inBed = true; pet.action = null;
+  care.need = null; care.stage = null; nextStep();
+}
+function nextStep() { // il prossimo passo (o, ogni tanto, un imprevisto: pipì / cacca)
+  if (R.free) return newNeed();
+  if (R.i >= 0 && !pet.inBed && care.lastNeed !== 'pipi' && care.lastNeed !== 'cacca') { // mai due di fila, mai mentre dorme
+    // pipì divise tra le 3 parti della giornata (con gli extra), la cacca nella sua parte; entro la fine della parte arrivano sicuro
+    const partsLeft = DAY_PARTS.length - DAY_PARTS.indexOf(R.part), stepsLeft = Math.max(1, ROUTINE[R.part].steps.length - R.i - 1);
+    const pipiHere = Math.ceil(day.potty.pipi / partsLeft) - (R.partPipi || 0);
+    if (pipiHere > 0 && Math.random() < pipiHere / stepsLeft) { day.potty.pipi--; R.partPipi = (R.partPipi || 0) + 1; return setNeed('pipi'); }
+    if (day.potty.cacca > 0 && day.caccaPart === R.part && Math.random() < 1 / stepsLeft) { day.potty.cacca--; return setNeed('cacca'); }
+  }
+  if (day.tantrum && !day.tantrumDone && R.i >= 0 && !pet.inBed && day.stepN >= day.tantrumStep) { day.tantrumDone = true; return startTantrum(); }
+  R.i++;
+  const steps = ROUTINE[R.part].steps;
+  if (R.i >= steps.length) return advancePart(); // fine di questa parte della giornata
+  day.stepN++;
+  const st = steps[R.i]; if (st.time) timeKey = st.time; goRoom(st.room); setNeed(st.need);
+}
+// passa alla parte dopo (mattina → pomeriggio → sera); finché la sera non c'è: bisogni liberi in cameretta
+function advancePart() {
+  const next = DAY_PARTS[DAY_PARTS.indexOf(R.part) + 1];
+  newPart(); R.partPipi = 0;
+  if (next && ROUTINE[next]) { R.part = next; R.i = -1; timeKey = ROUTINE[next].time; return nextStep(); }
+  R.free = true; if (next) { R.part = next; timeKey = next; } goRoom('camera'); pet.needT = 4;
+}
+function routineEffect(act) { // cosa cambia nel mondo quando un passo è fatto
+  if (act === 'wake') { R.curtains = 1; pet.inBed = false; pet.x = L.bed.x + L.bed.w * .3; pet.tx = L.petX; sfx.sparkle(); }
+  if (act === 'dress') { pet.outfit = 'maglietta'; burst(pet.x, L.petY, 12, RAINBOW, 'star'); }
+  if (act === 'bag') { pet.bag = true; }
+  if (act === 'change') { pet.outfit = 'tuta'; burst(pet.x, L.petY, 12, RAINBOW, 'star'); } // tuta comoda per casa
+  if (act === 'sleep' && care.stage === 'need' && care.need === 'siesta') { // siesta: va nel lettino, dorme un po', poi si sveglia da solo
+    pet.inBed = true; R.nap = { t: 0 }; return true;
+  }
+  if (act === 'pajama') { pet.outfit = 'pigiama'; burst(pet.x, L.petY, 12, RAINBOW, 'star'); }
+  if (act === 'sleep' && care.stage === 'need' && care.need === 'nanna') { // la nanna della sera: buonanotte, la notte passa e arriva un giorno nuovo
+    pet.inBed = true; care.need = null; care.stage = null; buildBar(); pet.mood = 'dorme';
+    speak(pick(['Bravo Lolo!', 'Bravissimo Lolo!'])); sfx.lullaby(); texts.push({ t: 'Buonanotte 🌙', life: 4 });
+    R.night = { t: 0 }; return true;
+  }
+  if (act === 'bus') { // ciao ciao! a scuola il tempo passa veloce
+    care.need = null; care.stage = null; buildBar(); speak(pick(['Bravo Lolo!', 'Bravissimo Lolo!']));
+    R.trip = { t: 0 }; return true;
+  }
+  return false;
+}
+function updateTrip(dt) {
+  if (!R.trip) return;
+  R.trip.t += dt * SPD().k;
+  if (R.trip.t > 1.2 && !R.trip.bell) { R.trip.bell = 1; sfx.fanfare(); }
+  if (R.trip.t >= 5) { // di ritorno da scuola: il bus lo riporta davanti a casa, comincia il pomeriggio
+    R.trip = null; pet.bag = false; R.room = 'fuori'; worldFade = 1; pet.x = pet.tx = L.petX;
+    pet.mood = 'felice'; pet.jump = 1; VOICES[pet.kind]();
+    R.part = 'mattina'; R.i = ROUTINE.mattina.steps.length; R.pendingPart = true; pet.needT = 2.5; // dopo un attimo: passo successivo = pomeriggio
+  }
+}
+// gita a scuola: il bus attraversa lo schermo, poi la scuola con l'orologio che gira veloce
+function drawTrip(t) {
+  const u = R.trip.t;
+  if (u < 1.5) { // il bus arriva, si ferma, riparte con il cucciolo al finestrino
+    const bx = u < .6 ? lerp(W + 200, L.petX, ease(u / .6)) : u < .9 ? L.petX : lerp(L.petX, -300, ease((u - .9) / .6)), by = L.petY + L.s * .2;
+    drawBus(bx, by, L.s * 1.2, u >= .6);
+    return;
+  }
+  // scuola
+  const w = Math.min(W * .5, H * .55), x = W / 2 - w / 2, y = H * .2;
+  ctx.fillStyle = 'rgba(255,255,255,.85)'; rr(ctx, x - 20, y - 20, w + 40, w * .9 + 40, 30); ctx.fill();
+  ctx.fillStyle = '#ffd6a5'; rr(ctx, x, y + w * .3, w, w * .55, 14); ctx.fill();
+  ctx.fillStyle = '#ff8fa3'; ctx.beginPath(); ctx.moveTo(x - 10, y + w * .32); ctx.lineTo(x + w / 2, y + w * .02); ctx.lineTo(x + w + 10, y + w * .32); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#8fd3ff'; for (let i = 0; i < 3; i++) { rr(ctx, x + w * (.1 + i * .3), y + w * .42, w * .2, w * .16, 6); ctx.fill(); }
+  ctx.fillStyle = '#c3a6ff'; rr(ctx, x + w * .42, y + w * .62, w * .16, w * .23, 8); ctx.fill();
+  const cx = x + w / 2, cy = y + w * .19, r = w * .09; // orologio che gira veloce
+  ctx.fillStyle = '#fff'; circ(ctx, cx, cy, r); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 3; ctx.stroke();
+  for (const [len, sp] of [[.6, 1], [.85, 12]]) { const a = (u - 1.5) * sp - Math.PI / 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * r * len, cy + Math.sin(a) * r * len); ctx.stroke(); }
+  bigText('A scuola… 🎨🎵', y + w * .95, clamp(W * .05, 22, 44), '#6a7bd1');
+}
+function drawBus(x, y, s, withPet) {
+  ctx.save(); ctx.translate(x, y);
+  ctx.fillStyle = '#ffd166'; rr(ctx, -s * 1.3, -s * .9, s * 2.6, s * 1.1, s * .25); ctx.fill();
+  ctx.fillStyle = '#8fd3ff'; for (let i = 0; i < 3; i++) { rr(ctx, -s * 1.1 + i * s * .75, -s * .75, s * .6, s * .45, s * .08); ctx.fill(); }
+  if (withPet && pet.kind) { ctx.save(); rr(ctx, -s * 1.1, -s * .75, s * .6, s * .45, s * .08); ctx.clip(); drawPet(ctx, pet.kind, -s * .8, -s * .35, s * .22, MOODS.felice, performance.now() / 1000, null, { outfit: pet.outfit ? { type: pet.outfit, col: '#ffadad' } : null }); ctx.restore(); }
+  ctx.fillStyle = INK; circ(ctx, -s * .75, s * .2, s * .2); ctx.fill(); circ(ctx, s * .75, s * .2, s * .2); ctx.fill();
+  ctx.fillStyle = '#fff'; circ(ctx, -s * .75, s * .2, s * .08); ctx.fill(); circ(ctx, s * .75, s * .2, s * .08); ctx.fill();
+  ctx.fillStyle = '#ff8fa3'; ctx.fillRect(-s * 1.3, -s * .2, s * 2.6, s * .1);
+  ctx.restore();
+}
+
+// =========================================================
+//  BARRA IN BASSO (disegnata sul canvas: tocca o trascina l'oggetto sul cucciolo)
+// =========================================================
+function barSlots() {
+  const n = care.bar.length, h = L.barH, r = Math.min(h * .36, (W - 30) / (n * 2.5)), gap = r * 2.5;
+  return care.bar.map((k, i) => ({ k, x: W / 2 + (i - (n - 1) / 2) * gap, y: H - h / 2 - 4, r }));
+}
+let dragItem = null, flyItem = null;
+function drawBar(t) {
+  const sl = barSlots(); if (!sl.length) return;
+  const w = (sl.length - 1) * sl[0].r * 2.5 + sl[0].r * 2.8, h = L.barH;
+  ctx.fillStyle = 'rgba(255,255,255,.82)'; rr(ctx, W / 2 - w / 2, H - h - 8, w, h, h / 2); ctx.fill();
+  const right = rightItems();
+  for (const b of sl) {
+    const glow = speedKey === 'lento' && care.glow && right.includes(b.k); // 🐢: dopo il primo sbaglio l'oggetto giusto brilla
+    if (glow) { ctx.fillStyle = `rgba(255,224,102,${.55 + Math.sin(t * 6) * .3})`; circ(ctx, b.x, b.y, b.r * 1.22); ctx.fill(); }
+    ctx.fillStyle = '#fff'; circ(ctx, b.x, b.y, b.r); ctx.fill();
+    ctx.strokeStyle = 'rgba(106,123,209,.25)'; ctx.lineWidth = 3; ctx.stroke();
+    if ((dragItem && dragItem.k === b.k) || (flyItem && flyItem.k === b.k)) ctx.globalAlpha = .75; // l'oggetto scelto resta ben visibile nel suo posto
+    itemIcon(b.k, b.x, b.y + b.r * .05 + (glow ? Math.sin(t * 6) * 2 : 0), b.r * 1.15, t);
+    ctx.globalAlpha = 1;
+  }
+  const it = dragItem || flyItem; // l'oggetto che vola o che Lolo sta portando
+  if (it) itemIcon(it.k, it.x, it.y, sl[0].r * 1.4, t);
+}
+// icona di un oggetto: emoji, tranne il soffione (disegnato: un batuffolo bianco sul gambo, che brilla)
+function itemIcon(k, x, y, size, t) {
+  if (ITEMS[k].icon !== 'soffione') return emo(iconOf(k), x, y, size);
+  const r = size * .3;
+  ctx.strokeStyle = '#7cc48d'; ctx.lineWidth = Math.max(2, size * .06); ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y + size * .45); ctx.quadraticCurveTo(x - size * .08, y + size * .15, x, y - size * .05); ctx.stroke();
+  ctx.fillStyle = `rgba(255,240,170,${.35 + Math.sin((t || 0) * 3) * .15})`; circ(ctx, x, y - size * .12, r * 1.35); ctx.fill(); // bagliore
+  ctx.strokeStyle = 'rgba(130,130,160,.9)'; ctx.lineWidth = Math.max(1.4, size * .025); // raggi più scuri: il soffione si vede anche sul bianco
+  for (let i = 0; i < 16; i++) { const a = i * TAU / 16; ctx.beginPath(); ctx.moveTo(x, y - size * .12); ctx.lineTo(x + Math.cos(a) * r, y - size * .12 + Math.sin(a) * r); ctx.stroke(); }
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(130,130,160,.8)'; ctx.lineWidth = 1.2;
+  for (let i = 0; i < 16; i++) { const a = i * TAU / 16; circ(ctx, x + Math.cos(a) * r, y - size * .12 + Math.sin(a) * r, size * .05); ctx.fill(); ctx.stroke(); }
+  ctx.fillStyle = '#c9a66b'; circ(ctx, x, y - size * .12, size * .06); ctx.fill(); // centro
+}
+function updateFly(dt) {
+  if (!flyItem) return;
+  flyItem.t = Math.min(1, flyItem.t + dt / .45);
+  const u = ease(flyItem.t), tx = pet.x, ty = L.petY - L.s * .3;
+  flyItem.x = lerp(flyItem.x0, tx, u); flyItem.y = lerp(flyItem.y0, ty, u) - Math.sin(u * Math.PI) * L.s * .8;
+  if (flyItem.t >= 1) { const k = flyItem.k; flyItem = null; useItem(k); }
+}
+
+// =========================================================
+//  ANIMAZIONI DELLE AZIONI (mangia, beve, doccia, vasino, nanna, palla, copertina, bolle, spazzolino, libro)
+// =========================================================
+const emo = (txt, x, y, size, rot) => { ctx.save(); ctx.translate(x, y); if (rot) ctx.rotate(rot); ctx.font = `${Math.round(size)}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000'; ctx.fillText(txt, 0, 0); ctx.restore(); }; // fillStyle pieno: le emoji prendono la trasparenza del colore
+function breathAmt(a) { const ph = (a.t / a.dur * 2) % 1; return ph < .5 ? ease(ph / .5) : 1 - ease((ph - .5) / .5); } // 0 → 1 → 0 per ogni respiro
+function actionFace() { // come appare il cucciolo mentre fa l'azione
+  const a = pet.action; if (!a) return null;
+  if (a.act === 'sleep') return { mood: 'dorme' };
+  if (a.act === 'wash' || a.act === 'breathe') return { mood: 'felice', closed: true };
+  return { mood: 'felice', happy: true };
+}
+function drawActionBack(x, y, s) { // dietro al cucciolo
+  const a = pet.action; if (!a) return;
+  if (a.act === 'potty') { ctx.fillStyle = '#fff'; rr(ctx, x - s * .65, y + s * .55, s * 1.3, s * .5, s * .2); ctx.fill(); ctx.fillStyle = '#bde0fe'; rr(ctx, x - s * .75, y + s * .48, s * 1.5, s * .16, s * .08); ctx.fill(); }
+}
+function drawActionFront(x, y, s, t) {
+  const a = pet.action; if (!a) return;
+  const u = a.t / a.dur, F = PETS[pet.kind].face, my = y + F.mouthY * s;
+  if (a.act === 'eat') { const bites = Math.floor(u * 4); emo(a.icon || iconOf(a.key), x + s * .3, my, s * (.45 - bites * .09), 0); } // il piatto del pasto
+  if (a.act === 'drink') emo(a.icon || '🥤', x + s * .32, my - s * .05, s * .6, -.5 - Math.sin(u * Math.PI) * .3);
+  if (a.act === 'brush') emo('🪥', x + Math.sin(t * 18) * s * .12, my + s * .02, s * .5, -.3);
+  if (a.act === 'read') { emo('📖', x, y + s * .3, s * .85, 0); }
+  if (a.act === 'medicine') { // cucchiaino di sciroppo
+    const k = Math.min(1, u * 2.5); emo('🥄', x + s * (.55 - k * .3), my + s * .05, s * .42, -.6);
+    if (u < .45) { ctx.fillStyle = '#ff8fb8'; ell(ctx, x + s * (.42 - k * .3), my - s * .02, s * .06, s * .035); ctx.fill(); }
+    if (u > .5) { ctx.fillStyle = 'rgba(255,224,102,.9)'; for (let i = 0; i < 3; i++) { starPath(ctx, x + Math.cos(i * 2.1 + u * 6) * s * .7, y - s * .5 + Math.sin(i * 2.1 + u * 6) * s * .3, s * .06, u * 5); ctx.fill(); } }
+  }
+  if (a.act === 'play') {
+    const park = R.room === 'parco' ? ME().park : null; // al parco ognuno gioca a modo suo
+    if (park === 'pool') drawNoseBall(x, y, s, t); // la foca: palla sul naso, vicino alla sua piscinetta
+    else if (park === 'acorns') { for (let i = 0; i < 2; i++) { const p = (u * 4 + i * .5) % 1; emo('🌰', x + s * (-.6 + p * 1.2), y + s * (PETS[pet.kind].face.top - .15) - Math.sin(p * Math.PI) * s * .6, s * .32, p * 6); } } // lo scoiattolo fa il giocoliere con le noci, sopra la testa
+    else if (park === 'bubbles') { const F = PETS[pet.kind].face; for (let i = 0; i < 6; i++) { const p = (u * 3 + i / 6) % 1; ctx.globalAlpha = 1 - p; ctx.strokeStyle = '#a0c4ff'; ctx.lineWidth = 2; circ(ctx, x + s * (.84 + p * .8), y + s * (-.5 + F.top * 0 - p * 1.2) + Math.sin(p * 9 + i) * s * .1, s * (.06 + (i % 3) * .04)); ctx.stroke(); ctx.globalAlpha = 1; } } // bolle dalla proboscide
+    else if (park === 'mud') { ctx.fillStyle = '#b08968'; for (let i = 0; i < 8; i++) { const p = (u * 4 + i / 8) % 1, sx = (i % 2 ? 1 : -1) * (.3 + p * .8); circ(ctx, x + s * sx, y + s * .95 - Math.sin(p * Math.PI) * s * .7, s * .06 * (1 - p * .5)); ctx.fill(); } } // splash nel fango
+    else if (park === 'tire') { // seduto nella ruota appesa con le corde: si dondola
+      ctx.strokeStyle = '#9aa3b5'; ctx.lineWidth = 3; ctx.beginPath(); for (const sx of [-1, 1]) { ctx.moveTo(x + sx * s * .5, y + s * .9); ctx.lineTo(x + sx * s * .3, -10); } ctx.stroke();
+      ctx.strokeStyle = '#5a4a6a'; ctx.lineWidth = Math.max(5, s * .14); ell(ctx, x, y + s * .95, s * .6, s * .17); ctx.stroke();
+    }
+    else { const bx = x + s * 1.1, by = y + s * .9 - Math.abs(Math.sin(u * Math.PI * 4)) * s * .9; emo('⚽', bx, by, s * .45, u * 12); }
+  }
+  if (a.act === 'blanket') { // copertina sulle spalle
+    ctx.fillStyle = '#ffadc8'; rr(ctx, x - s * .62, y - s * .05, s * 1.24, s * .3 * Math.min(1, u * 3), s * .12); ctx.fill();
+    ctx.fillStyle = '#fff'; for (let i = 0; i < 4; i++) { circ(ctx, x - s * .45 + i * s * .3, y + s * .08, s * .035); ctx.fill(); }
+  }
+  if (a.act === 'breathe') { // respiro guidato: il cerchio si gonfia (3 s, dentro) e si sgonfia (3 s, fuori), 2 volte
+    const b = breathAmt(a), R0 = s * 1.25, R1 = s * 2.1, rr0 = lerp(R0, R1, b);
+    ctx.strokeStyle = 'rgba(160,200,255,.85)'; ctx.lineWidth = 6; circ(ctx, x, y - s * .2, rr0); ctx.stroke();
+    ctx.fillStyle = 'rgba(191,233,255,.12)'; ctx.fill();
+    itemIcon('soffione', x + s * 1.35, y - s * .1, s * .7, t);
+    const inhale = (u * 2) % 1 < .5, txt = inhale ? 'Respira…' : 'Soffia… 💨', ty = y - s * 1.75 - rr0 * .15; // etichetta bianca, testo scuro: si legge bene
+    ctx.font = `bold ${Math.round(s * .32)}px "Comic Sans MS","Chalkboard SE",system-ui,sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(txt).width; ctx.fillStyle = 'rgba(255,255,255,.95)'; rr(ctx, x - tw / 2 - s * .2, ty - s * .26, tw + s * .4, s * .52, s * .26); ctx.fill(); strokeOut(2);
+    ctx.fillStyle = INK; ctx.fillText(txt, x, ty + 1);
+  }
+  if (a.act === 'sponge') { // spugna sulla pozzetta, con le bollicine
+    emo('🧽', x + Math.sin(t * 9) * s * .5, y + s * 1.0, s * .45, Math.sin(t * 9) * .3);
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; for (let i = 0; i < 6; i++) { circ(ctx, x + Math.sin(t * 3 + i) * s * .6, y + s * (1.0 - ((t * .8 + i / 6) % 1) * .4), s * .04); ctx.fill(); }
+  }
+  if (a.act === 'hug') { for (let i = 0; i < 2; i++) parts.push({ x: x + rand(-s, s), y: y - s * 1.6, vx: rand(-20, 20), vy: rand(60, 140), life: 1, c: pick(['#ff8fa3', '#ffadc8', '#ff6b81']), kind: 'heart', r: rand(7, 12) }); } // pioggia di cuori
+  if (a.act === 'plush') emo('🧸', x, y + s * .35, s * .62, Math.sin(t * 4) * .1); // stretto al petto
+  if (a.act === 'handwash') { // mani insaponate: schiuma sulle mani e acqua dal rubinetto
+    emo('🧼', x + Math.sin(t * 10) * s * .2, y + s * .35, s * .32);
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; for (let i = 0; i < 8; i++) { circ(ctx, x + Math.cos(i * .8 + t * 3) * s * .35, y + s * .3 + Math.sin(i * .8 + t * 3) * s * .15, s * (.05 + (i % 3) * .02)); ctx.fill(); }
+    if (u > .55) { ctx.fillStyle = 'rgba(143,211,255,.85)'; for (let i = 0; i < 6; i++) { const p = (t * 2 + i / 6) % 1; dropPath(ctx, x - s * .2 + (i % 3) * s * .2, y - s * .4 + p * s * .8, s * .035); ctx.fill(); } }
+  }
+  if (a.act === 'sleep' && care.stage === 'malato2') { // malato: si infila sotto la coperta
+    ctx.fillStyle = '#c3a6ff'; rr(ctx, x - s * .85, y + s * .05, s * 1.7, s * 1.0, s * .3); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.4)'; for (let i = 0; i < 5; i++) { circ(ctx, x - s * .55 + i * s * .28, y + s * .45, s * .06); ctx.fill(); }
+  }
+  if (a.act === 'wash' && ME().spray) { // l'elefantino si spruzza da solo con la proboscide: archi d'acqua sopra la testa
+    ctx.fillStyle = 'rgba(143,211,255,.9)'; for (let i = 0; i < 12; i++) { const p = (t * 1.4 + i / 12) % 1; dropPath(ctx, x + s * (.84 - p * 1.5), y - s * (.45 + Math.sin(p * Math.PI) * 1.3), s * .045); ctx.fill(); }
+  }
+  if (a.act === 'wash') { // schiuma e doccia
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; for (let i = 0; i < 14; i++) { const ang = i * 2.4, rad = s * (.3 + (i % 3) * .2); circ(ctx, x + Math.cos(ang) * rad * .8, y - s * .2 + Math.sin(ang) * rad, s * (.09 + (i % 2) * .05) * Math.min(1, u * 4) * (u > .85 ? (1 - u) / .15 : 1)); ctx.fill(); }
+    ctx.fillStyle = 'rgba(143,211,255,.8)'; for (let i = 0; i < 10; i++) { const p = (t * 1.6 + i / 10) % 1; dropPath(ctx, x - s * .7 + (i % 5) * s * .35, y - s * 1.6 + p * s * 1.8, s * .035); ctx.fill(); }
+  }
+}
+
+// =========================================================
+//  INPUT: tocca (saltella e ride), accarezza (cuori, fusa: consola coccole e tristezza)
+// =========================================================
+let down = null;
+const onPet = (x, y) => Math.hypot(x - pet.x, y - (L.petY - L.s * .3)) < L.s * 1.35;
+cv.addEventListener('pointerdown', e => {
+  if (!started) return;
+  initAudio();
+  const x = e.clientX, y = e.clientY;
+  if (scene === 'choose' || !pet.kind) {
+    unlockedPets().forEach((k, i) => { const p = choosePos(i); if (Math.hypot(x - p.x, y - (p.y - p.s * .3)) < p.s * 1.3) choosePet(k); });
+    return;
+  }
+  const slot = barSlots().find(b => Math.hypot(x - b.x, y - b.y) < b.r * 1.15); // un oggetto della barra
+  if (slot && !pet.action && !flyItem) { dragItem = { k: slot.k, x, y, x0: slot.x, y0: slot.y, moved: 0 }; try { cv.setPointerCapture(e.pointerId); } catch (er) {} return; }
+  if (onPet(x, y)) { down = { x, y, moved: 0 }; try { cv.setPointerCapture(e.pointerId); } catch (er) {} return; }
+  burst(x, y, 6, RAINBOW, 'star'); tone(1200 + Math.random() * 600, 1500, .12, 'sine', .05);
+});
+cv.addEventListener('pointermove', e => {
+  if (scene !== 'room' || !pet.kind) return;
+  const x = e.clientX, y = e.clientY;
+  pet.look = [clamp((x - pet.x) / (L.s * 2), -1, 1), clamp((y - L.petY) / (L.s * 2), -1, 1)]; // ti segue con gli occhi
+  if (dragItem) { dragItem.moved += Math.hypot(x - dragItem.x, y - dragItem.y); dragItem.x = x; dragItem.y = y; return; }
+  if (!down) return;
+  const d = Math.hypot(x - down.x, y - down.y); down.moved += d; down.x = x; down.y = y;
+  if (d > 2 && onPet(x, y)) { // carezza
+    pet.pet = Math.min(1.6, pet.pet + d / (L.s * 3));
+    if (Math.random() < .25) parts.push({ x, y: y - 10, vx: rand(-30, 30), vy: rand(-90, -40), life: 1, c: pick(['#ff8fa3', '#ffadc8', '#ff6b81']), kind: 'heart', r: rand(7, 12) });
+    if (Math.random() < .04) sfx.purr();
+    if (acceptsPetting() && pet.pet > 1.2 && !pet.action) { pet.pet = 0; resolveStep(); } // la carezza consola (coccole, triste, arrabbiato, vergogna)
+  }
+});
+function release() {
+  if (dragItem) { // lasciato sul cucciolo = lo usa; un tocco = l'oggetto vola da solo; altrove = torna nella barra
+    const d = dragItem; dragItem = null;
+    if (d.moved < 14) flyItem = { k: d.k, x0: d.x0, y0: d.y0, x: d.x0, y: d.y0, t: 0 };
+    else if (onPet(d.x, d.y)) useItem(d.k);
+    return;
+  }
+  if (!down) return;
+  if (down.moved < 12) { pet.jump = 1; if (pet.mood === 'felice') sfx.giggle(); else VOICES[pet.kind](); } // tocco: saltella
+  down = null;
+}
+window.addEventListener('pointerup', release);
+window.addEventListener('pointercancel', release);
+
+// =========================================================
+//  AVVIO E BOTTONI
+// =========================================================
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, Math.max(0, (now - last) / 1000)); last = now;
+  update(dt); draw();
+  requestAnimationFrame(frame);
+}
+document.getElementById('play').addEventListener('click', () => {
+  initAudio(); started = true;
+  document.getElementById('start').classList.add('hide');
+  goFullscreen(); sfx.fanfare();
+  if (pet.kind) { scene = 'room'; pet.arrive = 1; VOICES[pet.kind](); startDay(); } else scene = 'choose';
+});
+document.getElementById('btnPet').addEventListener('click', () => { if (!started) return; initAudio(); scene = 'choose'; sfx.pop(); });
+const btnMute = document.getElementById('btnMute');
+btnMute.addEventListener('click', () => {
+  muted = !muted; btnMute.textContent = muted ? '🔇' : '🔊';
+  btnMute.setAttribute('aria-label', muted ? "Accendi l'audio" : "Spegni l'audio");
+  if (muted && 'speechSynthesis' in window) speechSynthesis.cancel();
+});
+const btnSpeed = document.getElementById('btnSpeed');
+function showSpeed() { btnSpeed.textContent = SPD().icon; btnSpeed.setAttribute('aria-label', SPD().label + ' (tocca per cambiare)'); btnSpeed.title = SPD().label; }
+btnSpeed.addEventListener('click', () => {
+  speedKey = SPEED_ORDER[(SPEED_ORDER.indexOf(speedKey) + 1) % SPEED_ORDER.length];
+  try { localStorage.setItem('lolo-speed', speedKey); } catch (e) {}
+  showSpeed();
+});
+showSpeed();
+const btnFull = document.getElementById('btnFull');
+const ICON_FULL = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="#5a6aa8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+const ICON_EXIT = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="#5a6aa8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
+const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+function goFullscreen() { const el = document.documentElement, fn = el.requestFullscreen || el.webkitRequestFullscreen; if (!fn) return; try { const r = fn.call(el); if (r && r.catch) r.catch(() => {}); } catch (e) {} }
+function exitFullscreen() { const fn = document.exitFullscreen || document.webkitExitFullscreen; if (!fn) return; try { const r = fn.call(document); if (r && r.catch) r.catch(() => {}); } catch (e) {} }
+function showFull() { const on = isFull(); btnFull.innerHTML = on ? ICON_EXIT : ICON_FULL; btnFull.setAttribute('aria-label', on ? 'Esci dallo schermo intero' : 'Schermo intero'); btnFull.title = on ? 'Esci dallo schermo intero' : 'Schermo intero'; }
+btnFull.addEventListener('click', () => { if (isFull()) exitFullscreen(); else goFullscreen(); });
+document.addEventListener('fullscreenchange', showFull);
+document.addEventListener('webkitfullscreenchange', showFull);
+if (!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) btnFull.style.display = 'none';
+showFull();
+
+let resizeTimer = null;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(layout, 150); });
+
+layout();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

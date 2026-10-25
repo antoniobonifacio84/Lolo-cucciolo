@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Il cucciolo di Lolo — proposta: cuccioli ed espressioni</title>
+<style>
+  body { margin: 0; background: #fff8f0; color: #5a4a6a; font-family: "Comic Sans MS", "Chalkboard SE", "Baloo 2", system-ui, sans-serif; }
+  header { padding: 18px 20px 6px; text-align: center; }
+  h1 { margin: 0; color: #ff8fb1; font-size: clamp(26px, 5vw, 44px); }
+  header p { margin: 6px auto 0; max-width: 820px; color: #6a7bd1; font-size: clamp(14px, 2.2vw, 18px); }
+  .stage { max-width: 980px; margin: 14px auto; padding: 12px; background: #fff; border-radius: 26px; box-shadow: 0 6px 0 rgba(0,0,0,.05); }
+  .stage canvas { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 18px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 10px; }
+  .row button { border: none; background: #f3f0ff; color: #5a4a6a; border-radius: 999px; padding: 9px 14px; font: inherit; font-size: 16px; cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,.06); }
+  .row button.on { background: #ffe066; }
+  .row button:focus-visible { outline: 4px solid #6a7bd1; outline-offset: 2px; }
+  .info { text-align: center; margin: 10px auto 0; max-width: 760px; font-size: 17px; }
+  .info b { color: #ff8fb1; }
+  .grid { max-width: 1200px; margin: 0 auto 30px; padding: 0 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+  .card { background: #fff; border-radius: 22px; padding: 10px 12px 14px; box-shadow: 0 5px 0 rgba(0,0,0,.05); }
+  .card h2 { margin: 2px 0 6px; font-size: 21px; color: #6a7bd1; }
+  .card canvas { width: 100%; aspect-ratio: 9 / 5; display: block; border-radius: 14px; }
+  .card p { margin: 6px 0 0; font-size: 14.5px; line-height: 1.35; }
+  .card .new { background: #ffe066; border-radius: 8px; padding: 1px 7px; font-size: 13px; margin-left: 6px; vertical-align: middle; }
+  footer { text-align: center; color: #8a7a96; font-size: 14px; padding: 0 16px 26px; max-width: 900px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Il cucciolo di Lolo — proposta</h1>
+  <p>Tre cuccioli e come si sentono. Ogni emozione si legge con <b>tutto il corpo</b> (occhi, bocca, orecchie, coda, braccia, postura), così Lolo impara a guardare e a capire cosa serve all'altro.</p>
+</header>
+
+<section class="stage" aria-label="Palco: guarda un cucciolo da vicino">
+  <canvas id="stage" role="img" aria-label="Il cucciolo scelto con l'emozione scelta"></canvas>
+  <div class="row" id="petBtns" aria-label="Scegli il cucciolo"></div>
+  <div class="row" id="moodBtns" aria-label="Scegli l'emozione"></div>
+  <div class="info" id="info"></div>
+</section>
+
+<section class="grid" id="grid" aria-label="Tutte le emozioni"></section>
+
+<footer>
+  Pagina di prova: solo per guardare e scegliere. Nel gioco vero la nuvoletta con l'icona compare sopra la testa, e quando Lolo fa la cosa giusta il cucciolo torna felice.
+  Gli scenari (cameretta, cucina, bagno, scuola, parco) avranno lo stesso stile pastello degli altri giochi; fuori casa riusiamo i paesaggi già fatti (prato, spiaggia, neve, bosco…).
+</footer>
+
+<script>
+'use strict';
+const TAU = Math.PI * 2, INK = '#5a4a6a', RAINBOW = ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf', '#9bf6ff', '#a0c4ff', '#bdb2ff'];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, u) => a + (b - a) * u;
+function ell(c, x, y, rx, ry, rot) { c.beginPath(); c.ellipse(x, y, Math.max(.1, rx), Math.max(.1, ry), rot || 0, 0, TAU); }
+function circ(c, x, y, r) { c.beginPath(); c.arc(x, y, Math.max(.1, r), 0, TAU); }
+function starPath(c, x, y, r, rot) { c.beginPath(); for (let i = 0; i < 10; i++) { const a = rot + i * Math.PI / 5 - Math.PI / 2, rad = i % 2 ? r * .48 : r; i ? c.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad) : c.moveTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); } c.closePath(); }
+function heartPath(c, x, y, r) { c.beginPath(); c.moveTo(x, y + r * .9); c.bezierCurveTo(x - r * 1.4, y - r * .1, x - r * .7, y - r * 1.2, x, y - r * .4); c.bezierCurveTo(x + r * .7, y - r * 1.2, x + r * 1.4, y - r * .1, x, y + r * .9); c.closePath(); }
+function dropPath(c, x, y, r) { c.beginPath(); c.moveTo(x, y - r * 1.6); c.quadraticCurveTo(x + r * 1.1, y - r * .1, x, y + r); c.quadraticCurveTo(x - r * 1.1, y - r * .1, x, y - r * 1.6); c.closePath(); }
+
+// =========================================================
+//  POSE: il linguaggio del corpo di ogni emozione (unità = s; origine = centro pancia, piedi a y ≈ 1)
+//  hands: dove vanno le mani [sinistra, destra]; ears 0 su → 1 giù; tail -1 giù → 1 su; tilt testa; squash postura
+// =========================================================
+const MOODS = {
+  felice:  { name: 'Felice', icon: '😊', eyes: 'open', mouth: 'smile', brows: 'up', hands: [[-.62, .72], [.62, .72]], swing: .06, ears: 0, tail: .6, wag: 3, tilt: 0, squash: 1,
+             see: 'orecchie su, coda che scodinzola, sorriso', act: 'Sta bene! Si può giocare insieme' },
+  fame:    { name: 'Ha fame', icon: '🍎', eyes: 'open', look: [0, .6], mouth: 'hungry', brows: 'worried', hands: [[-.17, .42], [.17, .46]], ears: .25, tail: 0, wag: 1, tilt: 0, squash: 1, fx: ['rumble'],
+             see: 'mani sulla pancia che brontola, bocca aperta, guarda in giù', act: 'Diamogli da mangiare' },
+  sonno:   { name: 'Ha sonno', icon: '💤', eyes: 'sleepy', mouth: 'yawn', brows: 'heavy', hands: [[-.55, .76], [.27, -.6]], rub: true, ears: .55, tail: -.4, wag: .5, tilt: .16, sway: .05, squash: .97, fx: ['zzz'],
+             see: 'occhi pesanti, sbadiglia, si stropiccia l\'occhio, testa che ciondola', act: 'Andiamo a nanna' },
+  gioco:   { name: 'Vuole giocare', icon: '⚽', eyes: 'sparkle', mouth: 'big', brows: 'up', hands: [[-.78, -.78], [.78, -.78]], wave: .12, ears: 0, tail: 1, wag: 9, tilt: 0, bounce: .12, squash: 1, fx: ['stars'],
+             see: 'saltella, braccia in alto, occhi che brillano, coda veloce', act: 'Giochiamo!' },
+  sporco:  { name: 'È sporco', icon: '🫧', eyes: 'squint', mouth: 'wavy', brows: 'worried', wrinkle: true, hands: [[-.6, .75], [.5, -1.12]], scratch: true, ears: .3, tail: -.2, wag: 1, tilt: -.08, squash: 1, fx: ['dirt', 'stink'],
+             see: 'macchie, puzzetta e moschino, si gratta la testa, naso arricciato', act: 'Una bella doccia' },
+  maniSporche: { name: 'Ha le mani sporche', icon: '🧼', eyes: 'open', look: [0, .7], mouth: 'small', brows: 'worried', hands: [[-.34, .02], [.34, .02]], ears: .1, tail: .2, wag: 1, tilt: 0, squash: 1, fx: ['dirtyHands'], isNew: true,
+             see: 'si guarda le manine macchiate e le tiene in avanti', act: 'Lavarsi le mani con il sapone' },
+  coccole: { name: 'Vuole le coccole', icon: '🤗', eyes: 'puppy', mouth: 'small', brows: 'sad', hands: [[-1.05, .02], [1.05, .02]], reach: true, ears: .6, tail: .2, wag: 1.5, tilt: -.18, squash: 1, blush: true,
+             see: 'occhioni lucidi, braccia aperte verso di te, testa inclinata', act: 'Un abbraccio (accarezzalo)' },
+  sete:    { name: 'Ha sete', icon: '💧', eyes: 'open', mouth: 'pant', brows: 'worried', hands: [[-.6, .75], [.72, -.42]], fan: true, ears: .4, tail: -.2, wag: 1, tilt: 0, squash: 1, fx: ['sweat'],
+             see: 'lingua fuori, goccia di sudore, si fa aria con la mano', act: 'Un bicchiere d\'acqua' },
+  pipi:    { name: 'Deve fare la pipì', icon: '🚽', eyes: 'wide', mouth: 'wavy', brows: 'worried', hands: [[-.07, .74], [.07, .74]], ears: .1, tail: 0, wag: 2, tilt: 0, legs: 'crossed', wiggle: .05, squash: 1,
+             see: 'gambe incrociate, mani in mezzo, balletto, occhi preoccupati', act: 'Di corsa al vasino!' },
+  cacca:   { name: 'Deve fare la cacca', icon: '💩', eyes: 'wide', mouth: 'wavy', brows: 'worried', hands: [[-.22, .6], [.22, .62]], ears: .15, tail: -.2, wag: 2, tilt: 0, legs: 'crossed', wiggle: .035, squash: .98, isNew: true,
+             see: 'si tiene il pancino, gambe strette, saltella sul posto, occhi preoccupati', act: 'Di corsa al vasino!' },
+  freddo:  { name: 'Ha freddo', icon: '🧣', eyes: 'worried', mouth: 'chatter', brows: 'worried', hands: [[.34, .26], [-.34, .26]], ears: .5, tail: -.8, wag: 0, tilt: 0, shiver: .02, squash: .95, fx: ['blue', 'snow'],
+             see: 'si abbraccia da solo, trema, batte i denti, guance blu', act: 'La copertina o il pigiama' },
+  triste:  { name: 'È triste', icon: '💗', eyes: 'sad', look: [0, .5], mouth: 'frown', brows: 'sad', hands: [[-.42, .86], [.42, .86]], ears: 1, tail: -1, wag: 0, tilt: .08, squash: .94, tear: true, isNew: true,
+             see: 'lacrimuccia, orecchie e coda giù, braccia molli, guarda in basso', act: 'Cosa c\'è? Una carezza e un abbraccio' },
+  vergogna: { name: 'Si vergogna', icon: '🫣', eyes: 'open', look: [.8, .6], mouth: 'small', brows: 'sad', hands: [[-.2, -.6], [.24, -.55]], peek: true, ears: .75, tail: -.8, wag: 0, tilt: .14, squash: .95, fx: ['blushBig'], isNew: true,
+             see: 'si copre la faccia con le mani, guance rosse, guarda di lato, si fa piccolo', act: 'Non fa niente, succede! Una carezza' },
+  arrabbiato: { name: 'È arrabbiato', icon: '💢', eyes: 'angry', mouth: 'pout', brows: 'angry', hands: [[.3, .2], [-.3, .2]], ears: .15, tail: .3, wag: 7, tilt: 0, legs: 'stomp', squash: 1, fx: ['steam', 'puff'], isNew: true,
+             see: 'braccia incrociate, guance gonfie e rosse, batte il piede, sbuffa', act: 'Calmiamoci: coccole, un gioco o un bel respiro' },
+  capriccio: { name: 'Arrabbiato senza motivo', icon: '⛈️', eyes: 'angry', mouth: 'pout', brows: 'angry', hands: [[.3, .2], [-.3, .2]], ears: .15, tail: .3, wag: 7, tilt: 0, legs: 'stomp', squash: 1, fx: ['steam', 'puff'], isNew: true,
+             see: 'come la rabbia, ma senza un motivo: ha pensato o visto qualcosa che non gli piace (nuvola col temporale)', act: 'Calmiamoci insieme e diciamogli che va tutto bene' },
+  bagnato: { name: 'Si è fatto la pipì addosso', icon: '🫣', eyes: 'open', look: [.8, .6], mouth: 'small', brows: 'sad', hands: [[-.2, -.6], [.24, -.55]], peek: true, ears: .75, tail: -.8, wag: 0, tilt: .14, squash: .95, fx: ['blushBig', 'puddle'], isNew: true,
+             see: 'pozzetta per terra, si copre la faccia, ha vergogna', act: 'Prima lo laviamo e cambiamo, poi una coccola' },
+  sporcato: { name: 'Si è fatto la cacca addosso', icon: '🫣', eyes: 'open', look: [.8, .6], mouth: 'small', brows: 'sad', hands: [[-.2, -.6], [.24, -.55]], peek: true, ears: .75, tail: -.8, wag: 0, tilt: .14, squash: .95, fx: ['blushBig', 'mess'], isNew: true,
+             see: 'macchia sul sederino e puzzetta, si copre la faccia, ha vergogna', act: 'Prima lo laviamo e cambiamo, poi una coccola' },
+  pancia:  { name: 'Ha mal di pancia', icon: '💊', eyes: 'sad', mouth: 'wavy', brows: 'sad', hands: [[-.16, .42], [.16, .46]], rubBelly: true, ears: .6, tail: -.6, wag: 0, tilt: .1, squash: .95, fx: ['sweat', 'green'], isNew: true,
+             see: 'si tiene la pancia, faccina verdina, sudore, orecchie giù', act: 'Un cucchiaino di medicina' },
+  malato:  { name: 'È malato', icon: '💊', eyes: 'sleepy', mouth: 'thermo', brows: 'sad', hands: [[-.5, .82], [.5, .82]], ears: .85, tail: -.9, wag: 0, tilt: .18, sway: .03, squash: .93, fx: ['fever', 'icepack'], isNew: true,
+             see: 'termometro in bocca, borsa del ghiaccio, guance rosse di febbre, stanchissimo', act: 'Medicina e poi a letto, a riposare' },
+  dorme:   { name: 'Dorme', icon: '🌙', eyes: 'closed', mouth: 'o', brows: 'none', hands: [[-.2, .5], [.2, .52]], ears: .6, tail: -.5, wag: 0, tilt: .22, squash: .97, breath: true, fx: ['zzz'],
+             see: 'occhi chiusi, respira piano, testa appoggiata', act: 'Shh… lasciamolo dormire' },
+};
+const MOOD_KEYS = Object.keys(MOODS);
+
+// =========================================================
+//  CUCCIOLI (di fronte, articolati: testa che si inclina, orecchie, coda, braccia, gambe)
+// =========================================================
+function limb(c, s, x0, y0, x1, y1, bend, w, col) { // braccio morbido con il gomito
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2, dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1;
+  c.strokeStyle = col; c.lineWidth = s * w; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(s * x0, s * y0); c.quadraticCurveTo(s * (mx - dy / L * bend), s * (my + dx / L * bend), s * x1, s * y1); c.stroke();
+}
+const PETS = {
+  scimmietta: { name: 'Scimmietta', emoji: '🐒', fur: '#c49a7a', dark: '#a87e60', light: '#f1d6bf', hand: '#f1d6bf', arm: '#b58a6a',
+    face: { eyeY: -.66, eyeDX: .26, eyeR: .1, mouthY: -.3, cheekY: -.42, cheekDX: .44, noseY: -.45, top: -1.3 }, shoulder: [.42, .12], armW: .16, handR: .12, bodyE: [0, .45, .56, .56], neck: .08,
+    tail(c, s, u, w) { // u: 0 giù → 1 su
+      c.strokeStyle = this.fur; c.lineWidth = s * .12; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(s * .3, s * .78);
+      c.bezierCurveTo(s * lerp(.9, 1.0, u), s * lerp(.98, .7, u), s * lerp(1.25, 1.1 + w, u), s * lerp(1.05, -.3, u), s * lerp(1.38 + w, .75 + w, u), s * lerp(.92, -.25, u));
+      c.stroke();
+      if (u > .5) { c.beginPath(); c.arc(s * (.68 + w), s * -.12, s * .1, -Math.PI * .3, Math.PI * .9); c.stroke(); } // ricciolo
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .45, s * .56, s * .56); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .52, s * .36, s * .38); c.fill();
+    },
+    head(c, s, droop) {
+      for (const sx of [-1, 1]) {
+        const ex = sx * s * (.82 + droop * .04), ey = s * (-.58 + droop * .24);
+        c.fillStyle = this.fur; ell(c, ex, ey, s * .28, s * .28 * (1 - droop * .25)); c.fill();
+        c.fillStyle = this.light; ell(c, ex, ey, s * .16, s * .16 * (1 - droop * .25)); c.fill();
+      }
+      c.fillStyle = this.fur; circ(c, 0, s * -.55, s * .74); c.fill();
+      c.fillStyle = this.light; circ(c, -s * .25, s * -.66, s * .3); c.fill(); circ(c, s * .25, s * -.66, s * .3); c.fill(); ell(c, 0, s * -.36, s * .48, s * .33); c.fill();
+      c.fillStyle = this.dark; circ(c, -s * .06, s * -.45, s * .025); c.fill(); circ(c, s * .06, s * -.45, s * .025); c.fill();
+    } },
+  scoiattolo: { name: 'Scoiattolo', emoji: '🐿️', fur: '#e7a06a', dark: '#c97f48', light: '#f6d2ae', hand: '#f6d2ae', arm: '#d48a55',
+    face: { eyeY: -.66, eyeDX: .28, eyeR: .1, mouthY: -.3, cheekY: -.4, cheekDX: .44, noseY: -.46, top: -1.45 }, shoulder: [.33, .16], armW: .13, handR: .09, bodyE: [0, .45, .5, .55], neck: .1,
+    tail(c, s, u, w) { // coda grande: su = dritta dietro la schiena, giù = per terra
+      const cx = lerp(.95, .72, u), cy = lerp(.78, -.15, u), rot = lerp(1.3, .35, u) + w * .5, rx = .42, ry = lerp(.75, .9, u);
+      c.fillStyle = this.fur; ell(c, s * cx, s * cy, s * rx, s * ry, rot); c.fill();
+      c.fillStyle = this.light; ell(c, s * (cx + .03), s * cy, s * .2, s * ry * .72, rot); c.fill();
+      c.fillStyle = this.fur; circ(c, s * (cx + Math.sin(rot) * ry * .9), s * (cy - Math.cos(rot) * ry * .9), s * .24); c.fill();
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .45, s * .5, s * .55); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .52, s * .32, s * .4); c.fill();
+    },
+    head(c, s, droop) {
+      for (const sx of [-1, 1]) { // orecchie a punta che si piegano di lato quando è giù
+        c.save(); c.translate(sx * s * .38, s * -.98); c.rotate(sx * droop * 1.0);
+        c.fillStyle = this.fur; c.beginPath(); c.moveTo(-s * .17, s * .05); c.lineTo(sx * s * .05, -s * .45); c.lineTo(s * .17, s * .05); c.closePath(); c.fill();
+        c.fillStyle = this.light; c.beginPath(); c.moveTo(-s * .09, 0); c.lineTo(sx * s * .04, -s * .3); c.lineTo(s * .09, 0); c.closePath(); c.fill();
+        c.fillStyle = this.dark; ell(c, sx * s * .05, -s * .47, s * .045, s * .085, sx * .3); c.fill();
+        c.restore();
+      }
+      c.fillStyle = this.fur; ell(c, 0, s * -.55, s * .68, s * .62); c.fill();
+      c.fillStyle = this.light; ell(c, -s * .38, s * -.38, s * .25, s * .2); c.fill(); ell(c, s * .38, s * -.38, s * .25, s * .2); c.fill(); ell(c, 0, s * -.36, s * .24, s * .18); c.fill();
+      c.fillStyle = this.dark; ell(c, 0, s * -.46, s * .06, s * .04); c.fill();
+    } },
+  foca: { name: 'Foca', emoji: '🦭', fur: '#a9b7c9', dark: '#8fa0b5', light: '#d9e1ec', hand: '#8fa0b5', flipper: true,
+    face: { eyeY: -.38, eyeDX: .3, eyeR: .12, mouthY: .06, cheekY: -.14, cheekDX: .48, noseY: -.19, top: -.85 }, shoulder: [.6, .28], armW: .2, handR: 0, bodyE: [0, .12, .76, .95], neck: .22,
+    tail(c, s, u, w) { // pinne della coda: su = alzate, giù = piatte
+      c.fillStyle = this.dark;
+      for (const sx of [-1, 1]) { ell(c, sx * s * .26, s * (1.02 - u * .06), s * .3, s * .1, sx * (.45 + u * .35 + w * 1.5)); c.fill(); }
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .12, s * .76, s * .95); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .42, s * .48, s * .55); c.fill();
+    },
+    head(c, s, droop) { // la foca non ha orecchie: parlano i baffi (su felici, giù tristi)
+      c.fillStyle = '#eef2f7'; ell(c, -s * .13, s * -.1, s * .18, s * .14); c.fill(); ell(c, s * .13, s * -.1, s * .18, s * .14); c.fill();
+      c.fillStyle = this.dark; for (const [x, y] of [[-.18, -.13], [-.1, -.06], [-.2, -.04], [.18, -.13], [.1, -.06], [.2, -.04]]) { circ(c, s * x, s * y, s * .018); c.fill(); }
+      c.strokeStyle = 'rgba(90,74,106,.5)'; c.lineWidth = Math.max(1, s * .016); c.lineCap = 'round';
+      for (const sx of [-1, 1]) for (const k of [0, 1]) { const y0 = -.1 + k * .07; c.beginPath(); c.moveTo(sx * s * .28, s * y0); c.lineTo(sx * s * .58, s * (y0 - .06 + droop * .2 + k * .04)); c.stroke(); }
+      c.fillStyle = INK; ell(c, 0, s * -.19, s * .09, s * .06); c.fill();
+    } },
+  ippopotamo: { name: 'Ippopotamino', emoji: '🦛', fur: '#c3a8d6', dark: '#a589c0', light: '#f1e0ef', hand: '#f1e0ef', arm: '#b499c9',
+    face: { eyeY: -.8, eyeDX: .29, eyeR: .1, mouthY: -.2, cheekY: -.34, cheekDX: .52, noseY: -.44, top: -1.3 }, shoulder: [.54, .18], armW: .18, handR: .13, bodyE: [0, .5, .68, .55], neck: .1,
+    tail(c, s, u, w) { // codina corta col ciuffetto: su = alzata, giù = a terra
+      const tx = s * (.62 + w * .3), ty = s * lerp(.92, .42, u);
+      c.strokeStyle = this.fur; c.lineWidth = s * .07; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(s * .45, s * .78); c.quadraticCurveTo(s * .6, s * lerp(.9, .62, u), tx, ty); c.stroke();
+      c.fillStyle = this.dark; circ(c, tx, ty, s * .07); c.fill();
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .5, s * .68, s * .55); c.fill(); // pancione paffuto
+      c.fillStyle = this.light; ell(c, 0, s * .57, s * .45, s * .39); c.fill();
+    },
+    head(c, s, droop) { // testone tondo, musone grande con le narici, orecchiette piccole che si abbassano
+      for (const sx of [-1, 1]) {
+        const ex = sx * s * (.5 + droop * .12), ey = s * (-1.1 + droop * .2);
+        c.fillStyle = this.fur; ell(c, ex, ey, s * .13, s * .13 * (1 - droop * .3), sx * droop * .6); c.fill();
+        c.fillStyle = '#f2b8cf'; ell(c, ex, ey + s * .01, s * .065, s * .065 * (1 - droop * .3), sx * droop * .6); c.fill();
+      }
+      c.fillStyle = this.fur; ell(c, 0, s * -.63, s * .78, s * .6); c.fill(); // testone paffuto
+      c.fillStyle = this.light; ell(c, 0, s * -.3, s * .68, s * .38); c.fill(); // musone
+      c.fillStyle = this.dark; ell(c, -s * .15, s * -.44, s * .055, s * .04, -.3); c.fill(); ell(c, s * .15, s * -.44, s * .055, s * .04, .3); c.fill(); // narici
+      c.fillStyle = 'rgba(255,255,255,.35)'; ell(c, -s * .22, s * -.95, s * .14, s * .07, -.3); c.fill(); // lucetta sulla testa
+    } },
+  elefante: { name: 'Elefantino', emoji: '🐘', fur: '#a9c6ea', dark: '#86a7d3', light: '#e3eefb', hand: '#e3eefb', arm: '#98b8e0',
+    face: { eyeY: -.8, eyeDX: .28, eyeR: .1, mouthY: -.2, cheekY: -.42, cheekDX: .46, noseY: -.5, top: -1.3 }, shoulder: [.5, .18], armW: .18, handR: .13, bodyE: [0, .5, .64, .55], neck: .1,
+    tail(c, s, u, w) { // codina sottile col ciuffetto
+      const tx = s * (.62 + w * .3), ty = s * lerp(.92, .45, u);
+      c.strokeStyle = this.dark; c.lineWidth = s * .05; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(s * .42, s * .8); c.quadraticCurveTo(s * .6, s * lerp(.92, .65, u), tx, ty); c.stroke();
+      c.fillStyle = this.dark; ell(c, tx, ty, s * .05, s * .08, .4); c.fill();
+    },
+    body(c, s) {
+      c.fillStyle = this.fur; ell(c, 0, s * .5, s * .64, s * .55); c.fill();
+      c.fillStyle = this.light; ell(c, 0, s * .57, s * .42, s * .39); c.fill();
+    },
+    head(c, s, droop) { // orecchie grandi (sventolano su quando è felice, cadono giù quando è triste) e proboscide arricciata
+      for (const sx of [-1, 1]) {
+        const ex = sx * s * (.74 - droop * .06), ey = s * (-.68 + droop * .14), rot = sx * (-.25 + droop * .35);
+        c.fillStyle = this.fur; ell(c, ex, ey, s * .36, s * .44, rot); c.fill();
+        c.fillStyle = '#f5c9dc'; ell(c, ex + sx * s * .04, ey + s * .02, s * .22, s * .3, rot); c.fill();
+      }
+      c.fillStyle = this.fur; ell(c, 0, s * -.63, s * .7, s * .6); c.fill();
+      // proboscide: scende tra gli occhi e si arriccia di lato (giù quando è triste)
+      const tipX = .84, tipY = lerp(-.52, -.18, droop);
+      const trunk = () => { c.beginPath(); c.moveTo(-s * .02, s * -.4); c.quadraticCurveTo(-s * .02, s * -.22, s * .3, s * -.22); c.quadraticCurveTo(s * .64, s * -.22, s * tipX, s * tipY); };
+      c.lineCap = 'round'; c.strokeStyle = this.dark; c.lineWidth = s * .28; trunk(); c.stroke(); // contorno
+      c.strokeStyle = this.fur; c.lineWidth = s * .23; trunk(); c.stroke();
+      c.strokeStyle = this.dark; c.lineWidth = Math.max(1, s * .02); // pieghine della proboscide
+      for (const [x, y] of [[-.01, -.36], [.06, -.28], [.2, -.24]]) { c.beginPath(); c.moveTo(s * (x - .07), s * (y - .02)); c.lineTo(s * (x + .07), s * (y + .02)); c.stroke(); }
+      c.fillStyle = this.light; circ(c, s * tipX, s * tipY, s * .095); c.fill(); // la punta
+      c.fillStyle = 'rgba(255,255,255,.35)'; ell(c, -s * .22, s * -.97, s * .14, s * .07, -.3); c.fill(); // lucetta sulla testa
+    } },
+};
+const PET_KEYS = Object.keys(PETS);
+
+// =========================================================
+//  FACCIA: occhi, sopracciglia, bocca, lacrimuccia, naso arricciato
+// =========================================================
+function drawEyes(c, s, F, type, blink, look) {
+  const ex = F.eyeDX * s, ey = F.eyeY * s, er = F.eyeR * s, lx = look[0] * er * .35, ly = look[1] * er * .35;
+  if (blink && !['closed', 'happy', 'sleepy'].includes(type)) type = 'blinked';
+  c.lineCap = 'round'; c.strokeStyle = INK; c.lineWidth = Math.max(2, er * .32);
+  for (const sx of [-1, 1]) {
+    const x = sx * ex, y = ey;
+    if (type === 'open' || type === 'worried') {
+      c.fillStyle = INK; ell(c, x + lx, y + ly, er, er * 1.2); c.fill();
+      c.fillStyle = '#fff'; circ(c, x + lx - er * .32, y + ly - er * .42, er * .36); c.fill();
+    } else if (type === 'wide') { // spalancati (pipì!)
+      c.fillStyle = '#fff'; ell(c, x, y, er * 1.25, er * 1.4); c.fill(); c.strokeStyle = INK; c.lineWidth = Math.max(1.5, er * .18); c.stroke();
+      c.fillStyle = INK; circ(c, x + lx, y + ly, er * .6); c.fill(); c.fillStyle = '#fff'; circ(c, x + lx - er * .2, y + ly - er * .25, er * .2); c.fill();
+      c.lineWidth = Math.max(2, er * .32);
+    } else if (type === 'sparkle') {
+      c.fillStyle = INK; ell(c, x + lx, y + ly, er * 1.15, er * 1.3); c.fill();
+      c.fillStyle = '#fff'; starPath(c, x + lx - er * .25, y + ly - er * .35, er * .5, 0); c.fill(); circ(c, x + lx + er * .35, y + ly + er * .4, er * .18); c.fill();
+    } else if (type === 'puppy') { // occhioni lucidi
+      c.fillStyle = INK; ell(c, x + lx, y + ly, er * 1.35, er * 1.5); c.fill();
+      c.fillStyle = '#fff'; circ(c, x + lx - er * .4, y + ly - er * .5, er * .5); c.fill(); circ(c, x + lx + er * .45, y + ly + er * .45, er * .22); c.fill();
+      c.fillStyle = 'rgba(143,211,255,.55)'; c.beginPath(); c.ellipse(x + lx, y + ly + er * .9, er * 1.1, er * .45, 0, 0, Math.PI); c.fill(); // occhi lucidi
+    } else if (type === 'sad') { // palpebra in giù verso l'esterno
+      c.fillStyle = INK; ell(c, x + lx, y + ly + er * .1, er, er * 1.1); c.fill();
+      c.fillStyle = '#fff'; circ(c, x + lx - er * .3, y + ly - er * .2, er * .3); c.fill();
+      // palpebra triste: alta verso il naso, bassa verso l'esterno (se fosse al contrario sembrerebbe arrabbiato)
+      c.strokeStyle = INK; c.beginPath(); c.moveTo(x - sx * er * 1.1, y - er * 1.15); c.lineTo(x + sx * er * 1.15, y - er * .45); c.stroke();
+    } else if (type === 'angry') { // palpebra bassa verso il naso
+      c.fillStyle = INK; ell(c, x, y + er * .15, er * .95, er * 1.05); c.fill();
+      c.fillStyle = '#fff'; circ(c, x - er * .25, y - er * .05, er * .28); c.fill();
+      c.strokeStyle = INK; c.beginPath(); c.moveTo(x - sx * er * 1.15, y - er * .25); c.lineTo(x + sx * er * 1.15, y - er * 1.05); c.stroke();
+    } else if (type === 'squint') {
+      c.beginPath(); c.moveTo(x - sx * er, y - er * .6); c.lineTo(x + sx * er * .8, y); c.lineTo(x - sx * er, y + er * .6); c.stroke(); // > <
+    } else if (type === 'sleepy') {
+      c.fillStyle = INK; c.beginPath(); c.ellipse(x, y + er * .15, er, er * .9, 0, 0, Math.PI); c.fill();
+      c.beginPath(); c.moveTo(x - er * 1.15, y + er * .15); c.lineTo(x + er * 1.15, y + er * .15); c.stroke();
+    } else if (type === 'happy') {
+      c.beginPath(); c.arc(x, y + er * .4, er * .9, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+    } else { // closed / blinked
+      c.beginPath(); c.arc(x, y - er * .2, er * .9, Math.PI * .15, Math.PI * .85); c.stroke();
+    }
+  }
+}
+function drawBrows(c, s, F, type) {
+  if (!type || type === 'none') return;
+  const ex = F.eyeDX * s, by = (F.eyeY - F.eyeR * 2.3) * s, w = F.eyeR * s * 1.1;
+  c.strokeStyle = INK; c.lineWidth = Math.max(2, s * .028); c.lineCap = 'round';
+  for (const sx of [-1, 1]) {
+    const x = sx * ex; c.beginPath();
+    if (type === 'up') { c.arc(x, by + w * .5, w, Math.PI * 1.2, Math.PI * 1.8); }
+    else if (type === 'worried') { c.moveTo(x + sx * w, by + w * .25); c.lineTo(x - sx * w * .9, by - w * .25); }
+    else if (type === 'sad') { c.moveTo(x + sx * w, by + w * .45); c.quadraticCurveTo(x, by - w * .1, x - sx * w * .9, by - w * .45); }
+    else if (type === 'heavy') { c.moveTo(x - w, by + w * .7); c.lineTo(x + w, by + w * .7); }
+    else if (type === 'angry') { c.moveTo(x - sx * w * .9, by + w * .55); c.lineTo(x + sx * w, by - w * .25); } // giù verso il naso
+    c.stroke();
+  }
+}
+function drawMouth(c, s, F, type, t) {
+  const my = F.mouthY * s, mw = s * .17;
+  c.lineCap = 'round'; c.lineJoin = 'round'; c.strokeStyle = INK; c.lineWidth = Math.max(2, s * .035);
+  if (type === 'smile') { c.beginPath(); c.arc(0, my - mw * .55, mw, Math.PI * .2, Math.PI * .8); c.stroke(); }
+  else if (type === 'small') { const tr = Math.sin(t * 18) * mw * .03; c.beginPath(); c.arc(0, my - mw * .3 + tr, mw * .5, Math.PI * .25, Math.PI * .75); c.stroke(); } // sorrisino timido che trema
+  else if (type === 'big') { c.fillStyle = INK; c.beginPath(); c.arc(0, my - mw * .2, mw, 0, Math.PI); c.closePath(); c.fill(); c.fillStyle = '#ff9fb6'; ell(c, 0, my + mw * .5, mw * .5, mw * .28); c.fill(); }
+  else if (type === 'hungry') {
+    c.fillStyle = INK; ell(c, 0, my, mw * .65, mw * .55 + Math.sin(t * 6) * mw * .08); c.fill();
+    c.fillStyle = '#ff9fb6'; ell(c, 0, my + mw * .45, mw * .35, mw * .3); c.fill();
+    const d = (t * .6) % 1; c.fillStyle = 'rgba(143,211,255,.9)'; dropPath(c, mw * .6, my + mw * (.5 + d * .9), mw * .12); c.fill(); // acquolina
+  } else if (type === 'yawn') {
+    const cyc = (t % 4.5) / 4.5, a = cyc < .35 ? Math.sin(cyc / .35 * Math.PI) : 0;
+    c.fillStyle = INK; ell(c, 0, my + mw * .1, mw * (.25 + a * .45), mw * (.2 + a * .75)); c.fill();
+  } else if (type === 'frown') { const tr = Math.sin(t * 16) * mw * .03; c.beginPath(); c.arc(0, my + mw * .6 + tr, mw * .6, Math.PI * 1.2, Math.PI * 1.8); c.stroke(); }
+  else if (type === 'pant') { c.fillStyle = INK; c.beginPath(); c.arc(0, my - mw * .2, mw * .7, 0, Math.PI); c.closePath(); c.fill(); c.fillStyle = '#ff9fb6'; ell(c, 0, my + mw * (.6 + Math.sin(t * 9) * .1), mw * .3, mw * .42); c.fill(); }
+  else if (type === 'wavy' || type === 'chatter') {
+    const n = type === 'chatter' ? 6 : 4, j = type === 'chatter' ? Math.sin(t * 40) * mw * .08 : 0;
+    c.beginPath(); for (let i = 0; i <= n; i++) { const x = -mw * .7 + i * mw * 1.4 / n, y = my + (i % 2 ? -1 : 1) * mw * .15 + j; i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke();
+  } else if (type === 'thermo') { // termometro in bocca
+    c.save(); c.translate(mw * .1, my); c.rotate(.35);
+    c.fillStyle = '#fff'; c.strokeStyle = 'rgba(90,74,106,.4)'; c.lineWidth = 1.5; rr2(c, 0, -mw * .09, mw * 1.3, mw * .18, mw * .09); c.fill(); c.stroke();
+    c.fillStyle = '#ff6b6b'; circ(c, mw * 1.3, 0, mw * .14); c.fill(); c.fillRect(mw * .7, -mw * .04, mw * .6, mw * .08);
+    c.restore();
+    c.fillStyle = INK; ell(c, 0, my, mw * .2, mw * .16); c.fill();
+  } else { c.fillStyle = INK; ell(c, 0, my, mw * .22, mw * .25); c.fill(); }
+}
+// vestiti sul corpo (ritagliati sulla forma della pancia, dal collo in giù)
+function drawOutfit(c, s, P, o) {
+  const [cx, cy, rx, ry] = P.bodyE;
+  c.save(); ell(c, cx * s, cy * s, rx * s * 1.01, ry * s * 1.01); c.clip();
+  c.fillStyle = o.col; c.fillRect(-s * 1.2, P.neck * s, s * 2.4, s * 2);
+  if (o.type === 'pigiama') { c.fillStyle = 'rgba(255,255,255,.6)'; for (let y = P.neck; y < cy + ry; y += .16) c.fillRect(-s * 1.2, y * s, s * 2.4, s * .07); } // righe
+  if (o.type === 'maglietta') { c.fillStyle = '#ffd166'; starPath(c, 0, (P.neck + (cy + ry - P.neck) * .38) * s, s * .13, 0); c.fill(); }
+  if (o.type === 'tuta') { // tuta comoda per casa: tasca e cerniera
+    const my = (P.neck + (cy + ry - P.neck) * .62) * s;
+    c.fillStyle = 'rgba(255,255,255,.4)'; rr2(c, -s * .2, my - s * .05, s * .4, s * .18, s * .06); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,.7)'; c.lineWidth = Math.max(1.5, s * .025); c.beginPath(); c.moveTo(0, P.neck * s); c.lineTo(0, my - s * .05); c.stroke();
+  }
+  c.fillStyle = 'rgba(255,255,255,.35)'; ell(c, 0, P.neck * s, s * .28, s * .07); c.fill(); // colletto
+  c.restore();
+}
+function rr2(c, x, y, w, h, r) { r = Math.min(r, w / 2, h / 2); c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+
+// =========================================================
+//  CUCCIOLO COMPLETO con il linguaggio del corpo
+//  pose: valori numerici (anche interpolati) — m: emozione (per occhi, bocca, effetti)
+// =========================================================
+function poseOf(m) { return { hands: m.hands.map(h => h.slice()), ears: m.ears, tail: m.tail, tilt: m.tilt, squash: m.squash }; }
+function drawPet(c, kind, x, y, s, m, t, pose, extra) {
+  const P = PETS[kind], F = P.face, fx = m.fx || [], ps = pose || poseOf(m), ex = extra || {};
+  let dx = 0, dy = 0;
+  if (m.bounce) dy -= Math.abs(Math.sin(t * 5)) * s * m.bounce;
+  if (m.wiggle) dx += Math.sin(t * 14) * s * m.wiggle;
+  if (m.shiver) dx += Math.sin(t * 60) * s * m.shiver;
+  dy -= Math.sin(clamp(ex.jump || 0, 0, 1) * Math.PI) * s * .3;
+  const walk = ex.walk || 0; // 0 fermo → 1 cammina: saltello a ogni passo, piedi alternati, testa che dondola
+  if (walk) dy -= Math.abs(Math.sin(t * 8)) * s * .07 * walk;
+  const breath = m.breath ? Math.sin(t * 1.6) * .03 : Math.sin(t * 2.4) * .012;
+  const tilt = ps.tilt + (m.sway ? Math.sin(t * 1.5) * m.sway : 0) + Math.sin(t * 4) * .06 * walk;
+  const wag = Math.sin(t * (m.wag || 0)) * .08 * (m.wag ? 1 : 0);
+  // ombra (e pozzetta, se si è fatto la pipì addosso)
+  c.fillStyle = 'rgba(0,0,0,.1)'; ell(c, x, y + s * 1.05, s * .75, s * .12); c.fill();
+  if (fx.includes('puddle')) { c.fillStyle = 'rgba(255,224,102,.55)'; ell(c, x + s * .1, y + s * 1.08, s * .85, s * .17); c.fill(); c.fillStyle = 'rgba(255,255,255,.5)'; ell(c, x - s * .2, y + s * 1.05, s * .18, s * .04); c.fill(); }
+  c.save(); c.translate(x + dx, y + dy + s); c.scale(1 + breath * .5, ps.squash - breath); c.translate(0, -s); // si "affloscia" verso il basso
+  // coda (dietro)
+  P.tail(c, s, (ps.tail + 1) / 2, wag);
+  if (ex.bag) { c.fillStyle = '#7fc8f0'; rr2(c, -s * P.bodyE[2] * 1.15, s * (P.bodyE[1] - P.bodyE[3] * .7), s * P.bodyE[2] * 2.3, s * P.bodyE[3] * 1.1, s * .16); c.fill(); } // zainetto dietro la schiena (spunta ai lati)
+  // gambe e piedi
+  if (!P.flipper) {
+    const fc = kind === 'scoiattolo' ? P.dark : P.light;
+    if (m.legs === 'crossed') { // gambe incrociate: deve fare la pipì
+      limb(c, s, -.22, .78, .1, .98, 0, .16, P.fur); limb(c, s, .22, .78, -.1, .98, 0, .16, P.fur);
+      c.fillStyle = fc; ell(c, s * .12, s * .99, s * .17, s * .09, -.2); c.fill(); ell(c, -s * .12, s * 1.0, s * .17, s * .09, .2); c.fill();
+    } else if (m.legs === 'stomp') { // batte il piede
+      const up = Math.max(0, Math.sin(t * 9)) * .14;
+      c.fillStyle = fc; ell(c, -s * .3, s * (.98 - up), s * .2, s * .1); c.fill(); ell(c, s * .3, s * .98, s * .2, s * .1); c.fill();
+    } else {
+      const lu = walk * Math.max(0, Math.sin(t * 8)) * .12, ru = walk * Math.max(0, -Math.sin(t * 8)) * .12; // un piede alla volta
+      c.fillStyle = fc; ell(c, -s * .3, s * (.98 - lu), s * .2, s * .1); c.fill(); ell(c, s * .3, s * (.98 - ru), s * .2, s * .1); c.fill();
+    }
+  }
+  P.body(c, s);
+  if (ex.outfit) drawOutfit(c, s, P, ex.outfit); // pigiama / maglietta
+  if (fx.includes('mess')) { c.fillStyle = 'rgba(150,105,70,.6)'; ell(c, 0, s * .88, s * .3, s * .14); c.fill(); ell(c, s * .14, s * .78, s * .12, s * .08); c.fill(); } // macchia sul sederino (sopra il corpo, così si vede)
+  if (ex.bag) { c.strokeStyle = '#4f9fd6'; c.lineWidth = s * .07; c.lineCap = 'round'; for (const sx of [-1, 1]) { c.beginPath(); c.moveTo(sx * s * P.shoulder[0] * .75, s * (P.shoulder[1] - .08)); c.lineTo(sx * s * P.shoulder[0] * .55, s * (P.shoulder[1] + .45)); c.stroke(); } } // bretelle dello zainetto
+  if (fx.includes('dirt')) { c.fillStyle = 'rgba(150,105,70,.55)'; for (const [a, b, r] of [[-.3, .4, .1], [.25, .65, .08], [-.05, .15, .05], [.35, .25, .06]]) { ell(c, s * a, s * b, s * r * 1.3, s * r); c.fill(); } }
+  // testa (si inclina intorno al collo)
+  c.save(); c.translate(0, s * .1); c.rotate(tilt); c.translate(0, -s * .1);
+  P.head(c, s, ps.ears);
+  if (fx.includes('dirt')) { c.fillStyle = 'rgba(150,105,70,.5)'; ell(c, s * .35, s * -.85, s * .08, s * .06); c.fill(); ell(c, -s * .42, s * -.3, s * .06, s * .05); c.fill(); }
+  const cheek = fx.includes('blue') ? 'rgba(127,180,255,.6)' : m.blush || ex.pet ? 'rgba(255,130,165,.6)' : 'rgba(255,150,180,.3)';
+  const big = fx.includes('blushBig') || fx.includes('puff'); // vergogna: rosso acceso; rabbia: guance gonfie
+  const cheekCol = fx.includes('green') ? 'rgba(150,200,110,.65)' : fx.includes('fever') ? 'rgba(255,90,90,.7)' : fx.includes('puff') ? 'rgba(255,110,110,.6)' : fx.includes('blushBig') ? 'rgba(255,110,150,.7)' : cheek;
+  if (fx.includes('green')) { c.fillStyle = 'rgba(170,215,140,.25)'; ell(c, 0, F.eyeY * s + s * .15, s * .55, s * .4); c.fill(); } // faccina un po' verde
+  c.fillStyle = cheekCol; ell(c, -F.cheekDX * s, F.cheekY * s, s * (big ? .15 : .1), s * (big ? .1 : .06)); c.fill(); ell(c, F.cheekDX * s, F.cheekY * s, s * (big ? .15 : .1), s * (big ? .1 : .06)); c.fill();
+  const look = m.look || [0, 0];
+  drawEyes(c, s, F, ex.pet ? 'happy' : m.eyes, ex.blink, ex.look || look);
+  drawBrows(c, s, F, ex.pet ? 'up' : m.brows);
+  drawMouth(c, s, F, ex.pet || ex.jump > 0 ? 'big' : m.mouth, t);
+  if (m.wrinkle) { c.strokeStyle = 'rgba(90,74,106,.55)'; c.lineWidth = Math.max(1.5, s * .02); for (const k of [-1, 0, 1]) { c.beginPath(); c.moveTo(s * (k * .04 - .03), s * (F.noseY - .1 + k * .0)); c.lineTo(s * (k * .04 + .03), s * (F.noseY - .06)); c.stroke(); } }
+  if (m.tear) { const p = (t * .45) % 1, tx = -F.eyeDX * s - F.eyeR * s * .4, ty = (F.eyeY + F.eyeR * 1.2) * s + p * s * .35; c.globalAlpha = 1 - p * .6; c.fillStyle = '#8fd3ff'; dropPath(c, tx, ty, s * .045); c.fill(); c.globalAlpha = 1; }
+  if (fx.includes('sweat')) { const p = (t * .5) % 1; c.fillStyle = 'rgba(143,211,255,.95)'; dropPath(c, s * (F.cheekDX + .22), (F.eyeY - .1) * s + p * s * .3, s * .05); c.fill(); }
+  if (fx.includes('icepack')) { // borsa del ghiaccio in testa
+    c.save(); c.translate(-s * .1, (F.top + .17) * s); c.rotate(-.15);
+    c.fillStyle = '#9fd8ff'; rr2(c, -s * .3, -s * .1, s * .6, s * .2, s * .1); c.fill();
+    c.fillStyle = 'rgba(255,255,255,.6)'; ell(c, -s * .12, -s * .04, s * .1, s * .03); c.fill();
+    c.fillStyle = '#ffadc8'; rr2(c, s * .26, -s * .05, s * .1, s * .1, s * .03); c.fill();
+    c.restore();
+  }
+  c.restore();
+  // braccia (davanti): dove vanno le mani racconta l'emozione
+  ps.hands.forEach((h, i) => {
+    const side = i === 0 ? -1 : 1; let hx = h[0], hy = h[1];
+    if (m.swing) hy += Math.sin(t * 2 + i * Math.PI) * m.swing;
+    if (walk) { hy += Math.sin(t * 8 + i * Math.PI) * .1 * walk; hx += side * .05 * walk; } // braccia che dondolano camminando
+    if (m.wave) hx += Math.sin(t * 8 + i * Math.PI) * m.wave;
+    if (m.reach) hy += Math.sin(t * 2.5) * .05;
+    if (m.rub && i === 1) { hx += Math.cos(t * 7) * .05; hy += Math.sin(t * 7) * .04; }
+    if (m.scratch && i === 1) hx += Math.sin(t * 22) * .05;
+    if (m.fan && i === 1) { hx += Math.sin(t * 10) * .09; }
+    if (m.peek) hy += Math.max(0, Math.sin(t * 1.3 + i)) * .12; // sbircia da dietro le mani
+    if (m.rubBelly) { hx += Math.cos(t * 3 + i * Math.PI) * .06; hy += Math.sin(t * 3 + i * Math.PI) * .04; } // si massaggia la pancia
+    const sx0 = side * P.shoulder[0], sy0 = P.shoulder[1];
+    if (P.flipper) { // pinna: un ovale che punta verso la "mano"
+      const ddx = hx - sx0, ddy = hy - sy0, L = Math.min(.62, Math.hypot(ddx, ddy)), a = Math.atan2(ddy, ddx);
+      c.fillStyle = P.dark; ell(c, s * (sx0 + Math.cos(a) * L / 2), s * (sy0 + Math.sin(a) * L / 2), s * L / 2 + s * .05, s * P.armW / 2, a); c.fill();
+    } else {
+      limb(c, s, sx0, sy0, hx, hy, side * .1, P.armW, P.arm || P.fur); // un po' più scure: si vedono anche davanti alla pancia e alla coda
+      c.fillStyle = P.hand; circ(c, s * hx, s * hy, s * P.handR); c.fill();
+    }
+    if (fx.includes('dirtyHands')) { // manine macchiate di fango
+      const hr = s * Math.max(.09, P.handR || .1), ex2 = P.flipper ? s * (sx0 + (hx - sx0) * .8) : s * hx, ey2 = P.flipper ? s * (sy0 + (hy - sy0) * .8) : s * hy;
+      c.fillStyle = 'rgba(150,105,70,.7)'; circ(c, ex2 - hr * .3, ey2 - hr * .2, hr * .45); c.fill(); circ(c, ex2 + hr * .35, ey2 + hr * .25, hr * .35); c.fill();
+    }
+  });
+  c.restore();
+  // effetti intorno
+  const top = y + dy + F.top * s;
+  if (fx.includes('zzz')) { c.textAlign = 'center'; for (let i = 0; i < 3; i++) { const p = ((t * .35 + i / 3) % 1); c.globalAlpha = 1 - p; c.fillStyle = '#6a7bd1'; c.font = `bold ${Math.round(s * (.2 + p * .25))}px "Comic Sans MS",sans-serif`; c.fillText('z', x + s * (.5 + p * .5), top + s * .2 - p * s * .7); } c.globalAlpha = 1; }
+  if (fx.includes('stink')) {
+    c.strokeStyle = 'rgba(140,190,90,.75)'; c.lineWidth = Math.max(2, s * .03);
+    for (let i = -1; i <= 1; i++) { c.beginPath(); for (let k = 0; k <= 8; k++) { const yy = top - k * s * .05, xx = x + i * s * .3 + Math.sin(t * 4 + k * .8 + i) * s * .05; k ? c.lineTo(xx, yy) : c.moveTo(xx, yy); } c.stroke(); }
+    const fa = t * 3, fxp = x + Math.cos(fa) * s * .95, fyp = top + s * .35 + Math.sin(fa * 1.3) * s * .25; // moschino
+    c.fillStyle = INK; circ(c, fxp, fyp, s * .028); c.fill(); c.fillStyle = 'rgba(255,255,255,.85)'; ell(c, fxp - s * .025, fyp - s * .035, s * .028, s * .016, -.5); c.fill(); ell(c, fxp + s * .025, fyp - s * .035, s * .028, s * .016, .5); c.fill();
+  }
+  if (fx.includes('steam')) for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) { // sbuffi di vapore dalla testa
+    const p = ((t * .9 + k * .5 + (sx > 0 ? .25 : 0)) % 1); c.globalAlpha = .8 * (1 - p); c.fillStyle = '#fff'; c.strokeStyle = 'rgba(150,150,180,.5)'; c.lineWidth = 1.5;
+    circ(c, x + sx * s * (.55 + p * .35), top + s * .35 - p * s * .45, s * (.07 + p * .07)); c.fill(); c.stroke(); c.globalAlpha = 1;
+  }
+  if (fx.includes('mess')) { c.strokeStyle = 'rgba(140,190,90,.6)'; c.lineWidth = Math.max(2, s * .025); for (const i of [-1, 1]) { c.beginPath(); for (let k = 0; k <= 5; k++) { const yy = y + dy + s * .75 - k * s * .06, xx = x + i * s * .7 + Math.sin(t * 4 + k) * s * .04; k ? c.lineTo(xx, yy) : c.moveTo(xx, yy); } c.stroke(); } }
+  if (fx.includes('stars')) for (let i = 0; i < 3; i++) { const a = t * 2 + i * TAU / 3; c.fillStyle = RAINBOW[i * 2]; starPath(c, x + Math.cos(a) * s * 1.15, y + dy - s * .2 + Math.sin(a) * s * .35, s * .08, t); c.fill(); }
+  if (fx.includes('rumble') && (t % 2.6) < .9) { c.strokeStyle = 'rgba(90,74,106,.55)'; c.lineWidth = Math.max(2, s * .025); for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) { c.beginPath(); c.arc(x + dx + sx * s * .45, y + dy + s * .45, s * (.42 + k * .1), sx > 0 ? -.5 : Math.PI - .5, sx > 0 ? .5 : Math.PI + .5); c.stroke(); } }
+  if (fx.includes('snow')) for (let i = 0; i < 4; i++) { const p = (t * .25 + i / 4) % 1, xx = x + (i - 1.5) * s * .6, yy = top - s * .1 + p * s * 1.3; c.strokeStyle = 'rgba(150,195,255,.85)'; c.lineWidth = 2; for (let k = 0; k < 3; k++) { const a = k * Math.PI / 3; c.beginPath(); c.moveTo(xx - Math.cos(a) * s * .06, yy - Math.sin(a) * s * .06); c.lineTo(xx + Math.cos(a) * s * .06, yy + Math.sin(a) * s * .06); c.stroke(); } }
+  return { top, x: x + dx };
+}
+function drawThought(c, x, topY, s, icon, t) {
+  if (!icon) return;
+  const bob = Math.sin(t * 2) * s * .05, cx = x + s * 1.05, cy = topY - s * .25 + bob, r = s * .42;
+  c.fillStyle = '#fff'; c.strokeStyle = 'rgba(106,123,209,.35)'; c.lineWidth = Math.max(2, s * .02);
+  for (const [px, py, pr] of [[x + s * .45, topY + s * .25, s * .06], [x + s * .64, topY + s * .08, s * .09]]) { circ(c, px, py + bob, pr); c.fill(); c.stroke(); }
+  circ(c, cx, cy, r); c.fill(); c.stroke();
+  c.font = `${Math.round(s * .46)}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(icon, cx, cy + s * .02);
+}
+function drawBackdrop(c, w, h) { // cameretta semplice: muro, pavimento, tappeto
+  let g = c.createLinearGradient(0, 0, 0, h * .7); g.addColorStop(0, '#fff3e0'); g.addColorStop(1, '#ffe9d6'); c.fillStyle = g; c.fillRect(0, 0, w, h * .7);
+  c.fillStyle = 'rgba(255,255,255,.45)'; for (let y = 20; y < h * .66; y += 44) for (let x = (y / 44 % 2) * 22 + 14; x < w; x += 44) { circ(c, x, y, 3.5); c.fill(); }
+  g = c.createLinearGradient(0, h * .7, 0, h); g.addColorStop(0, '#f3d2a8'); g.addColorStop(1, '#e8c08e'); c.fillStyle = g; c.fillRect(0, h * .7, w, h * .3);
+  c.fillStyle = 'rgba(0,0,0,.05)'; c.fillRect(0, h * .7, w, 6);
+}
+
+// =========================================================
+//  PALCO GRANDE (con passaggio morbido tra un'emozione e l'altra)
+// =========================================================
+const stage = document.getElementById('stage'), sctx = stage.getContext('2d');
+let curPet = 'scimmietta', curMood = 'felice', cur = poseOf(MOODS.felice), jump = 0, petting = 0, blinkT = 0, nextBlink = 2;
+function sizeCanvas(cv) { const d = Math.min(2, devicePixelRatio || 1), r = cv.getBoundingClientRect(); cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); cv._d = d; cv._w = r.width; cv._h = r.height; }
+function lerpPose(a, b, k) {
+  a.hands.forEach((h, i) => { h[0] = lerp(h[0], b.hands[i][0], k); h[1] = lerp(h[1], b.hands[i][1], k); });
+  a.ears = lerp(a.ears, b.ears, k); a.tail = lerp(a.tail, b.tail, k); a.tilt = lerp(a.tilt, b.tilt, k); a.squash = lerp(a.squash, b.squash, k);
+}
+function drawStage(t, dt) {
+  const w = stage._w, h = stage._h, m = MOODS[curMood];
+  lerpPose(cur, poseOf(m), Math.min(1, dt * 5));
+  sctx.setTransform(stage._d, 0, 0, stage._d, 0, 0);
+  drawBackdrop(sctx, w, h);
+  const s = h * .2, x = w * .45, y = h * .55;
+  sctx.fillStyle = '#bde0fe'; ell(sctx, x, y + s * 1.05, s * 1.6, s * .33); sctx.fill();
+  const r = drawPet(sctx, curPet, x, y, s, m, t, cur, { jump, blink: blinkT > 0, pet: petting > .3 });
+  drawThought(sctx, r.x, r.top, s, m.icon && curMood !== 'felice' && curMood !== 'dorme' ? m.icon : null, t);
+}
+function setInfo() {
+  const m = MOODS[curMood];
+  document.getElementById('info').innerHTML = `<b>${PETS[curPet].name} — ${m.name}</b><br>Cosa vedi: ${m.see}.<br>Cosa può fare Lolo: ${m.act}.`;
+}
+function buildButtons() {
+  const pb = document.getElementById('petBtns'), mb = document.getElementById('moodBtns');
+  for (const k of PET_KEYS) { const b = document.createElement('button'); b.textContent = PETS[k].emoji + ' ' + PETS[k].name; b.dataset.k = k; b.onclick = () => { curPet = k; refresh(); }; pb.appendChild(b); }
+  for (const k of MOOD_KEYS) { const b = document.createElement('button'); b.textContent = MOODS[k].icon + ' ' + MOODS[k].name; b.dataset.k = k; b.onclick = () => { curMood = k; refresh(); }; mb.appendChild(b); }
+}
+function refresh() {
+  for (const b of document.querySelectorAll('#petBtns button')) b.classList.toggle('on', b.dataset.k === curPet);
+  for (const b of document.querySelectorAll('#moodBtns button')) b.classList.toggle('on', b.dataset.k === curMood);
+  setInfo();
+}
+// tocco = saltello; carezza (trascina sopra) = occhi felici e guance rosse
+let downAt = null;
+stage.addEventListener('pointerdown', e => { downAt = { x: e.clientX, y: e.clientY, moved: 0 }; });
+stage.addEventListener('pointermove', e => { if (!downAt) return; const d = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y); downAt.moved += d; downAt.x = e.clientX; downAt.y = e.clientY; petting = Math.min(1.5, petting + d / 150); });
+addEventListener('pointerup', () => { if (downAt && downAt.moved < 10) jump = 1; downAt = null; });
+
+// =========================================================
+//  SCHEDE: ogni emozione con i 3 cuccioli
+// =========================================================
+const cards = [];
+function buildCards() {
+  const grid = document.getElementById('grid');
+  for (const k of MOOD_KEYS) {
+    const m = MOODS[k], card = document.createElement('article'); card.className = 'card';
+    card.innerHTML = `<h2>${m.icon} ${m.name}${m.isNew ? '<span class="new">nuova</span>' : ''}</h2><canvas role="img" aria-label="${PET_KEYS.map(k => PETS[k].name).join(', ')}: ${m.name}"></canvas><p><b>Cosa vedi:</b> ${m.see}.<br><b>Cosa fa Lolo:</b> ${m.act}.</p>`;
+    grid.appendChild(card);
+    const cv = card.querySelector('canvas'); cards.push({ cv, ctx: cv.getContext('2d'), k });
+    card.addEventListener('click', () => { curMood = k; refresh(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  }
+}
+function drawCard(cd, t) {
+  const c = cd.ctx, w = cd.cv._w, h = cd.cv._h, m = MOODS[cd.k];
+  c.setTransform(cd.cv._d, 0, 0, cd.cv._d, 0, 0);
+  drawBackdrop(c, w, h);
+  const n = PET_KEYS.length, s = Math.min(h * .17, w / n * .3); // tutti i cuccioli in fila, anche se sono di più
+  PET_KEYS.forEach((p, i) => drawPet(c, p, w * (i + .5) / n, h * .5, s, m, t + i * .37, null, { blink: ((t + i) % 4) < .1 }));
+}
+
+function resizeAll() { sizeCanvas(stage); for (const cd of cards) sizeCanvas(cd.cv); }
+buildButtons(); buildCards(); refresh(); resizeAll();
+addEventListener('resize', resizeAll);
+let last = performance.now(), frameN = 0;
+function loop(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now; const t = now / 1000;
+  jump = Math.max(0, jump - dt * 2.2); petting = Math.max(0, petting - dt * .7);
+  nextBlink -= dt; if (nextBlink <= 0) { blinkT = .13; nextBlink = 2 + Math.random() * 3; } blinkT = Math.max(0, blinkT - dt);
+  drawStage(t, dt);
+  if (frameN++ % 2 === 0) for (const cd of cards) drawCard(cd, t); // schede a 30 fps
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
