@@ -119,9 +119,8 @@ const PETS = {
     tail(c, s, u, w) { // u: 0 giù → 1 su
       c.strokeStyle = this.fur; c.lineWidth = s * .12; c.lineCap = 'round';
       c.beginPath(); c.moveTo(s * .3, s * .78);
-      c.bezierCurveTo(s * lerp(.9, 1.0, u), s * lerp(.98, .7, u), s * lerp(1.25, 1.1 + w, u), s * lerp(1.05, -.3, u), s * lerp(1.38 + w, .75 + w, u), s * lerp(.92, -.25, u));
-      c.stroke();
-      if (u > .5) { c.beginPath(); c.arc(s * (.68 + w), s * -.12, s * .1, -Math.PI * .3, Math.PI * .9); c.stroke(); } // ricciolo
+      c.bezierCurveTo(s * lerp(.9, 1.0, u), s * lerp(.98, .7, u), s * lerp(1.25, 1.08 + w, u), s * lerp(1.05, -.25, u), s * lerp(1.28 + w, .72 + w, u), s * lerp(.92, -.18, u));
+      c.stroke(); // una sola curva continua: niente arco a U separato vicino alla testa
     },
     body(c, s) {
       c.fillStyle = this.fur; ell(c, 0, s * .45, s * .56, s * .56); c.fill();

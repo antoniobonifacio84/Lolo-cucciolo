@@ -217,9 +217,8 @@ const PETS = {
     tail(c, s, u, w) { // u: 0 giù → 1 su
       c.strokeStyle = this.fur; c.lineWidth = s * .12; c.lineCap = 'round';
       c.beginPath(); c.moveTo(s * .3, s * .78);
-      c.bezierCurveTo(s * lerp(.9, 1.0, u), s * lerp(.98, .7, u), s * lerp(1.25, 1.1 + w, u), s * lerp(1.05, -.3, u), s * lerp(1.38 + w, .75 + w, u), s * lerp(.92, -.25, u));
-      c.stroke();
-      if (u > .5) { c.beginPath(); c.arc(s * (.68 + w), s * -.12, s * .1, -Math.PI * .3, Math.PI * .9); c.stroke(); } // ricciolo
+      c.bezierCurveTo(s * lerp(.9, 1.0, u), s * lerp(.98, .7, u), s * lerp(1.25, 1.08 + w, u), s * lerp(1.05, -.25, u), s * lerp(1.28 + w, .72 + w, u), s * lerp(.92, -.18, u));
+      c.stroke(); // una sola curva continua: niente arco a U separato vicino alla testa
     },
     body(c, s) {
       c.fillStyle = this.fur; ell(c, 0, s * .45, s * .56, s * .56); c.fill();
@@ -575,8 +574,11 @@ const pet = { kind: null, mood: 'felice', pose: poseOf(MOODS.felice), blink: 0, 
               x: 0, tx: 0, walk: 0, pauseT: 1.5, atCenter: true }; // x = dove si trova nella stanza (gironzola quando sta bene)
 let parts = [], texts = [];
 let save = {};
+const SAVE_VERSION = 2; // pubblicazione completa: reset una tantum dei salvataggi delle prove
 try { save = JSON.parse(localStorage.getItem('lolo-cucciolo') || '{}') || {}; } catch (e) { save = {}; }
+if (save.version !== SAVE_VERSION) save = { version: SAVE_VERSION };
 const saveNow = () => { try { localStorage.setItem('lolo-cucciolo', JSON.stringify(save)); } catch (e) {} };
+saveNow();
 if (PETS[save.kind]) pet.kind = save.kind;
 
 function layout() {
@@ -726,6 +728,7 @@ const chestPos = () => ({ x: W * .05, y: L.floorY + (H - L.floorY) * .12, s: L.s
 // =========================================================
 const SOLO = {
   palla: { from: 'chest', dur: 6 }, paperella: { from: 'chest', dur: 5.5 }, mattoncini: { from: 'chest', dur: 6.5 }, libro: { from: 'bed', dur: 7 },
+  noce: { from: 'chest', dur: 6 }, // solo lo scoiattolo: la prende, ci gioca e la rimette/nasconde nel baule
 };
 function soloSpot(from) { // dove si mette per prendere il gioco
   if (from === 'chest') { const c = chestPos(); return clamp(c.x + c.s * 1.7 + L.s * .9, L.walkMin, L.walkMax); }
@@ -734,14 +737,16 @@ function soloSpot(from) { // dove si mette per prendere il gioco
 // ogni cucciolo ha le sue cose: il poster in cameretta, il suo gioco al parco, il gioco preferito, un oggetto del cuore
 const PERSONAL = {
   scimmietta: { poster: '🍌', park: 'tire' },                                  // altalena a ruota: si dondola
-  scoiattolo: { poster: '🌰', park: 'acorns', carry: '🌰' },                   // la sua noce sempre in mano
+  scoiattolo: { poster: '🌰', park: 'acorns', fav: 'noce' },                    // non più incollata alla mano: va al baule, prende una noce e poi la rimette
   ippopotamo: { poster: '🪷', park: 'mud', fav: 'paperella' },                 // la pozzanghera di fango, la sua paperella
   elefante:   { poster: '☁️', park: 'bubbles', balloon: true, spray: true },   // palloncino, si spruzza da solo nel bagnetto
   foca:       { poster: '🐟', park: 'pool', fav: 'palla', noseBall: true },     // la palla in equilibrio sul naso
 };
 const ME = () => PERSONAL[pet.kind] || {};
 function startSolo() {
-  const fav = ME().fav, k = fav && Math.random() < .6 ? fav : pick(Object.keys(SOLO)), d = SOLO[k]; // il gioco preferito, più spesso
+  const choices = Object.keys(SOLO).filter(k => k !== 'noce' || pet.kind === 'scoiattolo');
+  const fav = ME().fav, k = fav && choices.includes(fav) && Math.random() < .65 ? fav : pick(choices), d = SOLO[k]; // il gioco preferito, più spesso
+  pet.soloQueued = false; day.soloCount = (day.soloCount || 0) + 1;
   pet.solo = { k, phase: 'go', t: 0, dur: d.dur, from: d.from }; pet.tx = soloSpot(d.from);
 }
 function updateSolo(dt) {
@@ -756,9 +761,10 @@ function updateSolo(dt) {
     if (so.k === 'mattoncini' && [.2, .4, .6].some(at)) tone(700, 600, .06, 'triangle', .12);
     if (so.k === 'mattoncini' && at(.85)) { sfx.sparkle(); pet.jump = .7; }
     if (so.k === 'libro' && [.2, .45, .7].some(at)) noise(.12, 3000, 2000, .06, 'highpass'); // gira pagina
+    if (so.k === 'noce' && [.15, .4, .65, .9].some(at)) { tone(760, 520, .08, 'triangle', .1); pet.jump = .25; } // toc toc: fa saltare la noce
     if (so.t >= so.dur) { so.phase = 'back'; so.t = 0; pet.jump = .5; sfx.pop(); } // rimette a posto
   }
-  if (so.phase === 'back' && so.t > .5) { pet.solo = null; pet.soloCool = rand(14, 22); pet.pauseT = 1; pet.idleT = 0; }
+  if (so.phase === 'back' && so.t > .5) { pet.solo = null; pet.soloCool = rand(8, 12); pet.pauseT = 1; pet.idleT = 0; }
 }
 function drawSolo(x, y, s, t) { // il gioco tra le mani (o per terra)
   const so = pet.solo; if (!so || so.phase === 'go' || so.phase === 'back') return;
@@ -767,6 +773,10 @@ function drawSolo(x, y, s, t) { // il gioco tra le mani (o per terra)
   if (so.k === 'palla' && ME().noseBall) { drawNoseBall(x, y, s, t); return; } // la foca: palla sul naso
   if (so.k === 'palla') { const by = y + s * .9 - Math.abs(Math.sin(u * Math.PI * 5)) * s * .9; ctx.fillStyle = '#ffadad'; circ(ctx, x + s * .95, by, s * .22); ctx.fill(); strokeOut(2); ctx.fillStyle = '#fff'; ctx.fillRect(x + s * .73, by - s * .03, s * .44, s * .06); return; }
   if (so.k === 'paperella') { emo('🦆', x + s * .2, y + s * .3 + Math.sin(t * 6) * s * .04, s * .5, Math.sin(t * 6) * .15); return; }
+  if (so.k === 'noce') { // la noce non è permanente: la lancia, la riprende e infine la nasconde nel baule
+    const p = (u * 4) % 1, nx = x + s * (.15 + Math.sin(u * TAU) * .25), ny = y + s * .25 - Math.sin(p * Math.PI) * s * .75;
+    emo('🌰', nx, ny, s * .38, u * 10); return;
+  }
   if (so.k === 'mattoncini') { const n = Math.min(4, 1 + Math.floor(u * 4)); for (let i = 0; i < n; i++) emo('🧱', x + s * 1.0, y + s * (.95 - i * .22), s * .3); }
 }
 function drawNoseBall(x, y, s, t) { // palla colorata che salta piano sul naso
@@ -774,10 +784,9 @@ function drawNoseBall(x, y, s, t) { // palla colorata che salta piano sul naso
   ctx.fillStyle = '#ffadad'; circ(ctx, bx, by, s * .22); ctx.fill(); strokeOut(2);
   ctx.fillStyle = '#ffd166'; ctx.fillRect(bx - s * .22, by - s * .03, s * .44, s * .06); ctx.fillStyle = '#a0c4ff'; circ(ctx, bx, by, s * .07); ctx.fill();
 }
-// le cose del cucciolo che porta con sé (sopra il disegno del cucciolo)
+// le cose speciali del cucciolo (sopra il disegno); la noce non è qui: lo scoiattolo la prende dal baule quando gioca da solo
 function drawKeepsake(x, y, s, t) {
-  const me = ME(), busy = !!pet.action || !!pet.solo;
-  if (me.carry && !busy) emo(me.carry, x + s * .62, y + s * .48, s * .32, Math.sin(t * 2) * .1); // lo scoiattolo e la sua noce
+  const me = ME();
   if (me.balloon) { // il palloncino legato al polso
     const bx = x + s * (.95 + Math.sin(t * 1.3) * .08), by = y - s * 1.55 + Math.sin(t * 1.7) * s * .06;
     ctx.strokeStyle = 'rgba(90,74,106,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + s * .55, y + s * .4); ctx.quadraticCurveTo(x + s * 1.05, y - s * .5, bx, by + s * .3); ctx.stroke();
@@ -902,7 +911,12 @@ function setMood(m) {
 }
 // il cucciolo è stato aiutato: torna felice, festa piccola, "Bravo Lolo!"
 function helped() {
-  pet.mood = 'felice'; pet.jump = 1; pet.needT = R.free ? rand(10, 16) : rand(2.5, 4); pet.pauseT = 1.2; happyCount++; // nella routine: una breve passeggiata e poi il passo dopo
+  const gap = R.free ? (speedKey === 'lento' ? rand(16, 22) : rand(12, 18)) : (speedKey === 'lento' ? rand(8, 12) : rand(6, 9));
+  pet.mood = 'felice'; pet.jump = 1; pet.needT = gap; pet.pauseT = 1.2; happyCount++; // più tempo per passeggiare e fare qualcosa da solo
+  if (R.room === 'camera' && !pet.inBed && !R.night) { // autonomia frequente: probabilità alta + garanzia ogni 2 aiuti in cameretta
+    day.cameraHelps = (day.cameraHelps || 0) + 1;
+    pet.soloQueued = day.cameraHelps % 2 === 0 || Math.random() < .65;
+  }
   care.need = null; care.stage = null; care.strikes = 0; care.glow = false; buildBar();
   sfx.sparkle(); sfx.giggle(); burst(pet.x, L.petY - L.s * .9, 16, ['#ff8fa3', '#ffd166', '#ffadc8'], 'heart');
   speak(happyCount % 3 === 0 ? 'Bravissimo Lolo!' : 'Bravo Lolo!');
@@ -921,7 +935,7 @@ function update(dt) {
   pet.blink = Math.max(0, pet.blink - dt);
   pet.look[0] *= Math.pow(.3, dt); pet.look[1] *= Math.pow(.3, dt);
   const af0 = actionFace(); // durante un'azione (respiro, pappa…) il corpo prende la posa dell'azione, non quella del broncio
-  const holding = pet.solo && pet.solo.phase === 'play' && (pet.solo.k === 'libro' || pet.solo.k === 'paperella'); // tiene il gioco con le mani davanti
+  const holding = pet.solo && pet.solo.phase === 'play' && ['libro', 'paperella', 'noce'].includes(pet.solo.k); // tiene il gioco con le mani davanti
   lerpPose(pet.pose, poseOf(MOODS[af0 ? af0.mood : holding ? 'maniSporche' : pet.mood]), Math.min(1, dt * 4)); // il corpo cambia posa piano piano
   worldFade = Math.max(0, worldFade - dt * 2);
   updateTrip(dt);
@@ -970,7 +984,7 @@ function update(dt) {
     else if (!down && Math.abs(pet.x - pet.tx) < 3) { // fermo: si guarda intorno, poi riparte verso un altro punto
       pet.pauseT -= dt * k;
       pet.idleT += dt; if (pet.idleT > rand(5, 8)) { pet.idleT = 0; pet.jump = .8; VOICES[pet.kind](); } // ogni tanto saltella e fa il verso
-      if (pet.pauseT <= 0 && !pet.solo && R.room === 'camera' && (pet.soloCool || 0) <= 0 && Math.random() < (R.free ? .45 : .3)) { startSolo(); }
+      if (pet.pauseT <= 0 && !pet.solo && R.room === 'camera' && (pet.soloCool || 0) <= 0 && (pet.soloQueued || Math.random() < (R.free ? .8 : .65))) { startSolo(); }
       else if (pet.pauseT <= 0 && !pet.solo) {
         let nx = pet.x; for (let i = 0; i < 6 && Math.abs(nx - pet.x) < W * .18; i++) nx = rand(L.walkMin, L.walkMax);
         pet.tx = nx; pet.pauseT = rand(2, 4.5);
@@ -1144,8 +1158,8 @@ function needIcon() {
 // pipì e cacca: 3 + 1 al giorno, in punti a caso, mai due di fila. Acqua data senza sete = +1 pipì (max +2),
 // pappa data senza fame = +1 cacca (max +1); 3 pappe di troppo = mal di pancia.
 const day = { potty: { pipi: 3, cacca: 1 }, extraPipi: 0, extraCacca: 0, extraFood: 0, crises: 0 };
-function newDay() { day.potty = { pipi: 3, cacca: 1 }; day.extraPipi = day.extraCacca = day.extraFood = 0; day.crises = 0; }
-function newPart() { day.crises = 0; } // le "crisi" si contano per parte della giornata (mattina / pomeriggio / sera)
+function newDay() { day.potty = { pipi: 3, cacca: 1 }; day.extraPipi = day.extraCacca = day.extraFood = 0; day.crises = 0; day.cameraHelps = 0; day.soloCount = 0; pet.soloQueued = false; }
+function newPart() { day.crises = 0; day.cameraHelps = 0; } // ogni parte ha nuove occasioni di autonomia; le "crisi" si contano per parte
 function setNeed(n) {
   const meal = mealOf(n); care.dish = meal ? pick(MENUS[meal]) : null; // il piatto di questo pasto
   care.lastNeed = n; care.need = n; care.stage = 'need'; care.strikes = 0; care.glow = false; care.waitT = 0; care.waitSad = false; setMood(needMood(n)); buildBar(); }
@@ -1295,7 +1309,7 @@ function advancePart() {
   const next = DAY_PARTS[DAY_PARTS.indexOf(R.part) + 1];
   newPart(); R.partPipi = 0;
   if (next && ROUTINE[next]) { R.part = next; R.i = -1; timeKey = ROUTINE[next].time; return nextStep(); }
-  R.free = true; if (next) { R.part = next; timeKey = next; } goRoom('camera'); pet.needT = 4;
+  R.free = true; if (next) { R.part = next; timeKey = next; } goRoom('camera'); pet.needT = speedKey === 'lento' ? 12 : 9; pet.soloQueued = true;
 }
 function routineEffect(act) { // cosa cambia nel mondo quando un passo è fatto
   if (act === 'wake') { R.curtains = 1; pet.inBed = false; pet.x = L.bed.x + L.bed.w * .3; pet.tx = L.petX; sfx.sparkle(); }
@@ -1324,7 +1338,7 @@ function updateTrip(dt) {
   if (R.trip.t >= 5) { // di ritorno da scuola: il bus lo riporta davanti a casa, comincia il pomeriggio
     R.trip = null; pet.bag = false; R.room = 'fuori'; worldFade = 1; pet.x = pet.tx = L.petX;
     pet.mood = 'felice'; pet.jump = 1; VOICES[pet.kind]();
-    R.part = 'mattina'; R.i = ROUTINE.mattina.steps.length; R.pendingPart = true; pet.needT = 2.5; // dopo un attimo: passo successivo = pomeriggio
+    R.part = 'mattina'; R.i = ROUTINE.mattina.steps.length; R.pendingPart = true; pet.needT = speedKey === 'lento' ? 6 : 4.5; // dopo un attimo: passo successivo = pomeriggio
   }
 }
 // gita a scuola: il bus attraversa lo schermo, poi la scuola con l'orologio che gira veloce
