@@ -120,7 +120,10 @@ const sfx = {
   sniff() { for (let i = 0; i < 3; i++) noise(.08, 2500, 1500, .06, 'bandpass', i * .14); },
   sparkle() { [1319, 1568, 2093].forEach((f, i) => tone(f, f, .2, 'sine', .07, i * .07)); },
   whoosh() { noise(.4, 300, 1800, .1); },
-  lullaby() { [[659, .5], [587, .5], [523, 1], [587, .5], [659, .5], [659, 1], [587, .5], [523, .5], [494, 1.4]].reduce((d, [f, l]) => { tone(f, f, l * .9, 'sine', .08, d); return d + l * .55; }, 0); }, // ninna nanna dolce
+  lullaby(long) { // melodia calma: una frase per la siesta, due per la notte
+    const notes = [[659, .5], [587, .5], [523, 1], [587, .5], [659, .5], [659, 1], [587, .5], [523, .5], [494, 1.4]];
+    for (let r = 0; r < (long ? 2 : 1); r++) notes.reduce((d, [f, l]) => { tone(f, f, l * .9, 'sine', .065, r * 5.1 + d); return d + l * .55; }, 0);
+  },
 };
 // versi dei cuccioli (gli animali fanno solo i versi)
 const VOICES = {
@@ -647,7 +650,7 @@ function drawParco(t) { // prato, albero, altalena, scivolo e sabbiera (come i p
   drawParkThing(t); // il gioco del "suo" cucciolo
 }
 const bedPetX = () => L.bed.x + L.bed.w * .36; // il cucciolo che dorme nel lettino, con la testa sul cuscino
-function curtainsOpen() { const a = pet.action; return a && a.act === 'wake' ? ease(Math.min(1, a.t / a.dur * 1.4)) : R.curtains; }
+function curtainsOpen() { const a = pet.action; if (R.nap) return .45; return a && a.act === 'wake' ? ease(Math.min(1, a.t / a.dur * 1.4)) : R.curtains; } // siesta: tende chiuse a metà
 function drawWindow(t, w, open) { // finestra con il cielo del momento e le tende (open 0 = chiuse)
   const T = TIMES[timeKey];
   ctx.fillStyle = '#fff'; rr(ctx, w.x - 10, w.y - 10, w.w + 20, w.h + 20, 18); ctx.fill();
@@ -843,7 +846,13 @@ function drawBed(b, occupied) {
   ctx.fillStyle = '#bde0fe'; ctx.fillRect(x + w * .16, y - h * .08, w * .24, h * .06);
   if (!occupied) drawBlanket(b);
 }
-function drawBlanket(b) { // coperta (disegnata anche SOPRA il cucciolo quando dorme)
+function drawSleepingPet(s, m, t, wear) { // davvero sdraiato: testa sul cuscino, corpo lungo il materasso
+  const b = L.bed, ss = s * .72, ox = b.x + b.w * .3 + ss * .55, oy = b.y + b.h * .02;
+  ctx.save(); ctx.translate(ox, oy); ctx.rotate(-Math.PI / 2);
+  drawPet(ctx, pet.kind, 0, 0, ss, m, t, pet.pose, Object.assign({ blink: false, look: null, jump: 0, pet: false, walk: 0 }, wear));
+  ctx.restore();
+}
+function drawBlanket(b) { // coperta (disegnata anche SOPRA il cucciolo sdraiato)
   const x = b.x, y = b.y, w = b.w, h = b.h;
   ctx.fillStyle = '#8fb8ff'; rr(ctx, x + w * .33, y - h * .02, w * .58, h * .62, 14); ctx.fill(); strokeOut();
   ctx.fillStyle = 'rgba(255,255,255,.55)'; for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) { circ(ctx, x + w * (.45 + i * .16), y + h * (.22 + j * .22), h * .05); ctx.fill(); }
@@ -957,7 +966,12 @@ function update(dt) {
     const k = SPD().k, needy = !!care.stage || !!pet.action;
     // azione in corso (mangia, doccia…): suoni a tempo, poi si risolve
     if (pet.action) {
-      const a = pet.action, u0 = a.t / a.dur; a.t += dt; const u1 = a.t / a.dur, at = v => u0 < v && u1 >= v;
+      const a = pet.action;
+      if (a.phase === 'approach') { // cammina verso lavandino o vasca; l'azione parte solo quando è arrivato
+        pet.tx = a.targetX;
+        if (Math.abs(pet.x - a.targetX) < 4) { a.phase = 'do'; a.t = 0; pet.walk = 0; sfx.pop(); }
+      } else {
+      const u0 = a.t / a.dur; a.t += dt; const u1 = a.t / a.dur, at = v => u0 < v && u1 >= v;
       if (a.act === 'eat' && (at(.15) || at(.45) || at(.75))) sfx.gnam();
       if (a.act === 'drink' && at(.2)) sfx.glug();
       if (a.act === 'wash' && (at(.05) || at(.5))) sfx.splash();
@@ -978,17 +992,18 @@ function update(dt) {
       if (a.act === 'change' && at(.2)) sfx.whoosh();
       if (a.act === 'play' && Math.sin(u1 * Math.PI * 4) > .9) pet.jump = Math.max(pet.jump, .5);
       if (a.t >= a.dur) finishAction();
+      }
     }
     if (R.nap) { // siesta: dorme qualche secondo, poi si sveglia da solo, si stiracchia e il pomeriggio continua
-      R.nap.t += dt * k; pet.mood = 'dorme';
-      if (R.nap.t > 4.5) { R.nap = null; pet.inBed = false; pet.x = bedPetX(); pet.tx = L.petX; sfx.yawn(); pet.jump = 1; resolveStep(); }
+      R.nap.t += dt; pet.mood = 'dorme'; // il sonno usa secondi reali, non la velocità 🐢/🐇
+      if (R.nap.t > 7) { R.nap = null; pet.inBed = false; pet.x = bedPetX(); pet.tx = L.petX; sfx.yawn(); pet.jump = 1; resolveStep(); }
     }
     if (R.night) { // la notte: dorme sotto le stelle, poi si fa buio e comincia un giorno nuovo
-      R.night.t += dt * k; pet.mood = 'dorme';
-      if (R.night.t >= 7.5) { R.night = null; worldFade = 1; startDay(); }
+      R.night.t += dt; pet.mood = 'dorme'; // 14 secondi reali in entrambe le modalità
+      if (R.night.t >= 14) { R.night = null; worldFade = 1; startDay(); }
     }
     if (pet.inBed) { pet.x = pet.tx = bedPetX(); }   // dorme nel lettino (mattina finché non apri le tende, o la siesta)
-    else if (needy) pet.tx = L.petX;                  // quando gli serve qualcosa torna al centro, sul tappeto
+    else if (needy) pet.tx = pet.action && pet.action.targetX != null ? pet.action.targetX : L.petX; // resta al sanitario finché ha finito, poi torna al centro
     else if (!down && Math.abs(pet.x - pet.tx) < 3) { // fermo: si guarda intorno, poi riparte verso un altro punto
       pet.pauseT -= dt * k;
       pet.idleT += dt; if (pet.idleT > rand(5, 8)) { pet.idleT = 0; pet.jump = .8; VOICES[pet.kind](); } // ogni tanto saltella e fa il verso
@@ -1033,12 +1048,16 @@ function draw() {
     const s = L.s * (1 - pet.arrive * .6) * (pet.inBed ? .8 : 1) * (1 + (pet.breath || 0) * .08), af = actionFace(), m = MOODS[af ? af.mood : pet.mood]; // col respiro si gonfia d'aria
     const swing = pet.action && pet.action.act === 'play' && R.room === 'parco' && ME().park === 'tire' ? Math.sin(t * 3) * s * .35 : 0; // la scimmietta si dondola sulla ruota
     const px = pet.x + swing + Math.sin(t * 30) * s * .07 * (pet.shake || 0); // no-no: scuote la testa
-    const py = pet.inBed ? L.bed.y - s * .25 : L.petY;
+    const py = L.petY;
     const wear = { outfit: pet.outfit ? { type: pet.outfit, col: OUTFIT_COL[pet.outfit] } : null, bag: pet.bag };
-    if (!pet.inBed) drawActionBack(px, py, s);
-    const r = drawPet(ctx, pet.kind, px, py, s, m, t, pet.pose, Object.assign({ blink: pet.blink > 0 && !(af && af.closed), look: pet.solo && pet.solo.phase === 'play' ? [.3, .75] : Math.hypot(pet.look[0], pet.look[1]) > .05 ? pet.look : null, jump: pet.inBed ? 0 : pet.jump, pet: pet.pet > .3 || (af && af.happy), walk: pet.walk }, wear));
-    if (pet.inBed) drawBlanket(L.bed); // copertina sopra il cucciolo che dorme
-    else { drawActionFront(px, py, s, t); drawSolo(px, py, s, t); drawKeepsake(px, py, s, t); }
+    let r;
+    if (pet.inBed) { // testa sul cuscino e corpo sdraiato sotto la coperta
+      drawSleepingPet(s, m, t, wear); drawBlanket(L.bed); r = { x: bedPetX(), top: L.bed.y - L.s };
+    } else {
+      drawActionBack(px, py, s);
+      r = drawPet(ctx, pet.kind, px, py, s, m, t, pet.pose, Object.assign({ blink: pet.blink > 0 && !(af && af.closed), look: pet.solo && pet.solo.phase === 'play' ? [.3, .75] : Math.hypot(pet.look[0], pet.look[1]) > .05 ? pet.look : null, jump: pet.jump, pet: pet.pet > .3 || (af && af.happy), walk: pet.walk }, wear));
+      drawActionFront(px, py, s, t); drawSolo(px, py, s, t); drawKeepsake(px, py, s, t);
+    }
     if (care.stage && !pet.action && !R.nap && pet.atCenter) { // tocco sulla nuvoletta: si sbiadisce e passa visivamente l'attenzione al bottone giusto
       const fade = care.bubbleTap > 0 ? .2 + .8 * (1 - care.bubbleTap / 2) : 1;
       ctx.save(); ctx.globalAlpha = clamp(fade, .2, 1); drawThought(ctx, r.x, r.top, s, needIcon(), t); ctx.restore();
@@ -1046,8 +1065,8 @@ function draw() {
     if (pet.hintT > 4.5 && !pet.action) { const p = (t % 1.6) / 1.6; ctx.globalAlpha = p < .85 ? 1 : (1 - p) / .15; emo('👆', pet.x - s * .6 + p * s * 1.2, L.petY - s * .2 + Math.sin(p * Math.PI) * s * .1, s * .5); ctx.globalAlpha = 1; } // ditino: accarezzalo (dopo 4,5 s: il tempo per parlarne insieme)
   }
   if (scene === 'room' && pet.kind && pet.action && pet.action.act === 'sleep') { ctx.fillStyle = `rgba(30,30,80,${.3 * Math.sin(Math.min(1, pet.action.t / pet.action.dur) * Math.PI)})`; ctx.fillRect(0, 0, W, H); }
-  if (scene === 'room' && R.night) { const nt = R.night.t, dk = Math.min(.25, nt * .1) + (nt > 5.5 ? Math.min(1, (nt - 5.5) / 2) * .75 : 0); ctx.fillStyle = `rgba(20,20,60,${dk})`; ctx.fillRect(0, 0, W, H); // la notte si fa più buia, poi il giorno nuovo
-    if (nt > .5 && nt < 6) { ctx.globalAlpha = Math.min(1, (nt - .5) * 2, (6 - nt)); for (let i = 0; i < 3; i++) { const p = (t * .5 + i / 3) % 1; ctx.fillStyle = '#ffffff'; ctx.font = `bold ${L.s * (.25 + p * .2)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('z', bedPetX() + L.s * (.4 + p * .5), L.bed.y - L.s * (.6 + p * .8)); } ctx.globalAlpha = 1; } } // zzz
+  if (scene === 'room' && R.night) { const nt = R.night.t, dk = Math.min(.25, nt * .07) + (nt > 11.5 ? Math.min(1, (nt - 11.5) / 2.5) * .75 : 0); ctx.fillStyle = `rgba(20,20,60,${dk})`; ctx.fillRect(0, 0, W, H); // notte lunga: la stanza diventa buia solo alla fine
+    if (nt > .5 && nt < 12.5) { ctx.globalAlpha = Math.min(1, (nt - .5) * 2, (12.5 - nt)); for (let i = 0; i < 3; i++) { const p = (t * .5 + i / 3) % 1; ctx.fillStyle = '#ffffff'; ctx.font = `bold ${L.s * (.25 + p * .2)}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText('z', bedPetX() + L.s * (.4 + p * .5), L.bed.y - L.s * (.6 + p * .8)); } ctx.globalAlpha = 1; } } // zzz
   if (worldFade > 0) { ctx.fillStyle = `rgba(255,255,255,${worldFade})`; ctx.fillRect(0, 0, W, H); } // dissolvenza al cambio stanza
   if (scene === 'room' && pet.kind && !R.trip && !R.night) drawBar(t); // la barra sopra la penombra: sempre ben visibile
   for (const p of parts) {
@@ -1083,7 +1102,7 @@ const ITEMS = {
   pappa:      { icon: '🍎', act: 'eat',     dur: 2.2 },
   acqua:      { icon: '🥤', act: 'drink',   dur: 1.8 },
   doccia:     { icon: '🛁', act: 'wash',    dur: 2.6 },
-  vasino:     { icon: '🚽', act: 'potty',   dur: 2.4 },
+  vasino:     { icon: 'vasino', act: 'potty',   dur: 2.4 },
   nanna:      { icon: '🛏️', act: 'sleep',   dur: 3.2 },
   palla:      { icon: '⚽', act: 'play',    dur: 2.4 },
   copertina:  { icon: '🧣', act: 'blanket', dur: 2.0 },
@@ -1243,6 +1262,12 @@ function resolveStep() {
     care.stage = 'need'; care.strikes = 0; pet.mood = needMood(care.need); sfx.giggle(); buildBar(); // calmo: ora si può tornare a quello che chiedeva
   }
 }
+function bathTarget(act) { // prima di lavarsi, il cucciolo cammina davvero verso il sanitario
+  if (R.room !== 'bagno') return null;
+  if (act === 'handwash') return clamp(W * .31, L.walkMin, L.walkMax); // vicino al lavandino (a sinistra)
+  if (act === 'wash') return clamp(W * .61, L.walkMin, L.walkMax);     // vicino alla vasca/doccia (a destra)
+  return null;
+}
 function useItem(key) {
   if (pet.action || !pet.kind || R.trip || R.nap || R.night) return; // durante la siesta e la notte lasciamolo dormire
   const it = ITEMS[key], ok = rightItems().includes(key);
@@ -1254,7 +1279,9 @@ function useItem(key) {
   pet.solo = null; // se Lolo gli dà qualcosa, lascia il gioco e torna da lui
   const inStep = care.stage === 'need';
   const dur = key === 'nanna' && inStep && (care.need === 'siesta' || care.need === 'nanna') ? .3 : key === 'libro' && inStep && care.need === 'libro' ? 4 : it.dur; // nanna: va subito nel lettino · la storia della sera dura un po' di più
-  pet.action = { key, act: it.act, t: 0, dur, resolve: !!care.stage, icon: iconOf(key) }; // icon: il piatto che sta mangiando
+  const targetX = bathTarget(it.act);
+  pet.action = { key, act: it.act, t: 0, dur, resolve: !!care.stage, icon: iconOf(key), phase: targetX == null ? 'do' : 'approach', targetX }; // bagno: prima si avvicina, poi agisce
+  if (targetX != null) pet.tx = targetX;
   sfx.pop();
 }
 function finishAction() {
@@ -1329,12 +1356,12 @@ function routineEffect(act) { // cosa cambia nel mondo quando un passo è fatto
   if (act === 'bag') { pet.bag = true; }
   if (act === 'change') { pet.outfit = 'tuta'; burst(pet.x, L.petY, 12, RAINBOW, 'star'); } // tuta comoda per casa
   if (act === 'sleep' && care.stage === 'need' && care.need === 'siesta') { // siesta: va nel lettino, dorme un po', poi si sveglia da solo
-    pet.inBed = true; R.nap = { t: 0 }; return true;
+    pet.inBed = true; R.nap = { t: 0 }; sfx.lullaby(false); return true;
   }
   if (act === 'pajama') { pet.outfit = 'pigiama'; burst(pet.x, L.petY, 12, RAINBOW, 'star'); }
   if (act === 'sleep' && care.stage === 'need' && care.need === 'nanna') { // la nanna della sera: buonanotte, la notte passa e arriva un giorno nuovo
     pet.inBed = true; care.need = null; care.stage = null; buildBar(); pet.mood = 'dorme';
-    speak(pick(['Bravo Lolo!', 'Bravissimo Lolo!'])); sfx.lullaby(); texts.push({ t: 'Buonanotte 🌙', life: 4 });
+    speak(pick(['Bravo Lolo!', 'Bravissimo Lolo!'])); sfx.lullaby(true); texts.push({ t: 'Buonanotte 🌙', life: 4 });
     R.night = { t: 0 }; return true;
   }
   if (act === 'bus') { // ciao ciao! a scuola il tempo passa veloce
@@ -1411,8 +1438,20 @@ function drawBar(t) {
   const it = dragItem || flyItem; // l'oggetto che vola o che Lolo sta portando
   if (it) itemIcon(it.k, it.x, it.y, sl[0].r * 1.4, t);
 }
-// icona di un oggetto: emoji, tranne il soffione (disegnato: un batuffolo bianco sul gambo, che brilla)
+// vasino da bimbo, grande e colorato: non dipende dall'emoji del dispositivo
+function drawPottyIcon(x, y, size) {
+  const s = size;
+  ctx.save(); ctx.translate(x, y);
+  ctx.fillStyle = '#ffadc8'; rr(ctx, -s * .34, -s * .38, s * .68, s * .5, s * .2); ctx.fill(); strokeOut(2);
+  ctx.fillStyle = '#8fd3ff'; rr(ctx, -s * .46, -s * .12, s * .92, s * .34, s * .16); ctx.fill(); strokeOut(2);
+  ctx.fillStyle = '#ffffff'; ell(ctx, 0, -s * .1, s * .3, s * .12); ctx.fill(); ctx.strokeStyle = '#6a7bd1'; ctx.lineWidth = Math.max(2, s * .035); ctx.stroke();
+  ctx.fillStyle = '#ffd166'; starPath(ctx, 0, s * .06, s * .09, 0); ctx.fill();
+  ctx.fillStyle = '#6a7bd1'; for (const sx of [-1, 1]) { rr(ctx, sx * s * .32 - s * .06, s * .15, s * .12, s * .13, s * .05); ctx.fill(); }
+  ctx.restore();
+}
+// icona di un oggetto: emoji, tranne vasino e soffione (disegnati apposta)
 function itemIcon(k, x, y, size, t) {
+  if (k === 'vasino') return drawPottyIcon(x, y, size * .9);
   if (ITEMS[k].icon !== 'soffione') return emo(iconOf(k), x, y, size);
   const r = size * .3;
   ctx.strokeStyle = '#7cc48d'; ctx.lineWidth = Math.max(2, size * .06); ctx.lineCap = 'round';
@@ -1438,18 +1477,28 @@ function updateFly(dt) {
 const emo = (txt, x, y, size, rot) => { ctx.save(); ctx.translate(x, y); if (rot) ctx.rotate(rot); ctx.font = `${Math.round(size)}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000'; ctx.fillText(txt, 0, 0); ctx.restore(); }; // fillStyle pieno: le emoji prendono la trasparenza del colore
 function breathAmt(a) { const ph = (a.t / a.dur * 2) % 1; return ph < .5 ? ease(ph / .5) : 1 - ease((ph - .5) / .5); } // 0 → 1 → 0 per ogni respiro
 function actionFace() { // come appare il cucciolo mentre fa l'azione
-  const a = pet.action; if (!a) return null;
+  const a = pet.action; if (!a || a.phase === 'approach') return null;
   if (a.act === 'sleep') return { mood: 'dorme' };
   if (a.act === 'wash' || a.act === 'breathe') return { mood: 'felice', closed: true };
   return { mood: 'felice', happy: true };
 }
 function drawActionBack(x, y, s) { // dietro al cucciolo
-  const a = pet.action; if (!a) return;
-  if (a.act === 'potty') { ctx.fillStyle = '#fff'; rr(ctx, x - s * .65, y + s * .55, s * 1.3, s * .5, s * .2); ctx.fill(); ctx.fillStyle = '#bde0fe'; rr(ctx, x - s * .75, y + s * .48, s * 1.5, s * .16, s * .08); ctx.fill(); }
+  const a = pet.action; if (!a || a.phase === 'approach') return;
+  if (a.act === 'potty') { // vasino ben riconoscibile dietro al cucciolo: schienale rosa, seduta azzurra, vaschetta bianca
+    ctx.fillStyle = '#ffadc8'; rr(ctx, x - s * .52, y + s * .12, s * 1.04, s * .72, s * .28); ctx.fill(); strokeOut(3);
+    ctx.fillStyle = '#8fd3ff'; rr(ctx, x - s * .68, y + s * .55, s * 1.36, s * .38, s * .16); ctx.fill(); strokeOut(3);
+    ctx.fillStyle = '#ffffff'; ell(ctx, x, y + s * .58, s * .4, s * .14); ctx.fill(); ctx.strokeStyle = '#6a7bd1'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#ffd166'; starPath(ctx, x, y + s * .34, s * .12, 0); ctx.fill();
+  }
 }
 function drawActionFront(x, y, s, t) {
-  const a = pet.action; if (!a) return;
+  const a = pet.action; if (!a || a.phase === 'approach') return;
   const u = a.t / a.dur, F = PETS[pet.kind].face, my = y + F.mouthY * s;
+  if (a.act === 'potty') { // parte frontale: il vasino resta chiaramente visibile anche col cucciolo seduto
+    ctx.fillStyle = '#8fd3ff'; rr(ctx, x - s * .7, y + s * .62, s * 1.4, s * .42, s * .18); ctx.fill(); strokeOut(3);
+    ctx.fillStyle = '#bde0fe'; rr(ctx, x - s * .58, y + s * .65, s * 1.16, s * .14, s * .07); ctx.fill();
+    ctx.fillStyle = '#ffd166'; starPath(ctx, x, y + s * .86, s * .12, 0); ctx.fill();
+  }
   if (a.act === 'eat') { const bites = Math.floor(u * 4); emo(a.icon || iconOf(a.key), x + s * .3, my, s * (.45 - bites * .09), 0); } // il piatto del pasto
   if (a.act === 'drink') emo(a.icon || '🥤', x + s * .32, my - s * .05, s * .6, -.5 - Math.sin(u * Math.PI) * .3);
   if (a.act === 'brush') emo('🪥', x + Math.sin(t * 18) * s * .12, my + s * .02, s * .5, -.3);
